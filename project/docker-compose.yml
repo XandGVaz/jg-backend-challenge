@@ -1,0 +1,285 @@
+name: wagering
+
+# Serviços em ordem de dependência: cada um aparece depois daqueles de que depende (depends_on).
+
+# =================================================================================================
+# Variáveis compartilhadas
+# =================================================================================================
+
+# Variáveis SQS da api (readiness) e do worker (consumer); credenciais falsas só no emulador.
+x-sqs-env: &sqs-env
+  AWS_REGION: ${AWS_REGION:-us-east-1}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+  SQS_ENDPOINT: http://queue:4566
+  SQS_WAGER_TRANSACTIONS_QUEUE: wager-transactions.fifo
+  SQS_WAGER_TRANSACTIONS_DLQ: wager-transactions-dlq.fifo
+
+# Banco e telemetria comuns à api e ao worker (mesma imagem, mesmo service.name no OTel).
+x-app-env: &app-env
+  NODE_ENV: production
+  DATABASE_URL: postgres://${POSTGRES_USER:-wagering}:${POSTGRES_PASSWORD:-wagering}@database:5432/${POSTGRES_DB:-wagering}
+  OTEL_ENABLED: ${OTEL_ENABLED:-true}
+  OTEL_SERVICE_NAME: wagering-api
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+services:
+  # ===============================================================================================
+  # Observabilidade: api/worker -> OTLP -> otel-collector -> Jaeger (traces),
+  # Prometheus (métricas) e Loki (logs); o Grafana lê os três
+  # ===============================================================================================
+
+  # Jaeger: guarda e mostra os traces que o collector envia por OTLP/gRPC (jaeger:4317).
+  # - Versão fixada em 2.20.0 no Dockerfile: a 2.21+ removeu a API HTTP v1, que o Grafana 13 usa.
+  # - Armazenamento em memória e sem volume: os traces somem quando o container reinicia.
+  # - Só a UI (16686) é publicada; ninguém fora da rede do Compose envia trace direto para ele.
+  jaeger:
+    build:
+      context: ./observability/jaeger
+    ports:
+      - "${JAEGER_PORT:-16686}:16686"
+
+  # Prometheus: coleta (scrape) as métricas que o collector expõe em otel-collector:8889.
+  # - Não recebe push da api: o fluxo é api -> collector -> scrape a cada 10 s.
+  # - honor_labels no prometheus.yml mantém job/instance vindos do OTel (uma série por réplica).
+  # - Retenção de 7 dias no volume prometheus-data.
+  # - Não tem depends_on: se o collector ainda não subiu, o scrape falha e tenta no próximo ciclo.
+  prometheus:
+    build:
+      context: ./observability/prometheus
+    volumes:
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+  # Loki: recebe os logs por OTLP nativo (loki:3100/otlp), sem Promtail.
+  # - Campos do log (walletId, transactionId...) viram metadados, não labels: evita cardinalidade.
+  # - Retenção de 168 h no volume loki-data.
+  loki:
+    build:
+      context: ./observability/loki
+    volumes:
+      - loki-data:/loki
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+
+  # OpenTelemetry Collector: único destino de telemetria da api e do worker (OTLP/HTTP :4318).
+  # - Separa os sinais: traces -> Jaeger, métricas -> Prometheus (:8889), logs -> Loki.
+  # - memory_limiter vem primeiro no pipeline: sob pressão recusa dados em vez de cair.
+  # - depends_on só espera os backends iniciarem; não há healthcheck neles.
+  otel-collector:
+    build:
+      context: ./observability/otel-collector
+    ports:
+      - "${OTLP_HTTP_PORT:-4318}:4318"
+    depends_on:
+      - jaeger
+      - loki
+
+  # Grafana: lê Prometheus, Loki e Jaeger; dashboards e datasources vêm provisionados na imagem.
+  # - Dashboards ficam em /etc/grafana/dashboards: o volume grafana-data esconderia os da imagem.
+  # - O JSON no repositório é a fonte da verdade; mudança salva só na UI se perde no rebuild.
+  # - Leitura anônima (Viewer) ligada para facilitar a avaliação; admin/admin por padrão.
+  grafana:
+    build:
+      context: ./observability/grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/wagering-api.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+
+  # ===============================================================================================
+  # Banco de dados: PostgreSQL e migrations (Flyway)
+  # ===============================================================================================
+
+  # PostgreSQL 18: wallets, transações, ledger, inbox e outbox.
+  # - O volume monta em /var/lib/postgresql (não em .../data): é o layout novo da imagem 18.
+  # - Porta 5433 no host para não conflitar com um Postgres local.
+  # - O healthcheck (pg_isready) é o que database-init e database-undo esperam.
+  database:
+    build:
+      context: ./database
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wagering}
+      POSTGRES_USER: ${POSTGRES_USER:-wagering}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wagering}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - database-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Flyway: dono único do schema; aplica database/migrations (SQL puro) uma vez e termina.
+  # - api e worker esperam service_completed_successfully: migration com erro impede a subida.
+  # - Editar uma migration já aplicada derruba o próximo up com checksum mismatch.
+  # - clean desabilitado: ninguém apaga o schema inteiro por engano.
+  database-init:
+    build:
+      context: ./database
+      dockerfile: init.Dockerfile
+    environment:
+      FLYWAY_URL: jdbc:postgresql://database:5432/${POSTGRES_DB:-wagering}
+      FLYWAY_USER: ${POSTGRES_USER:-wagering}
+      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD:-wagering}
+      FLYWAY_LOCATIONS: filesystem:/flyway/migrations
+      FLYWAY_CONNECT_RETRIES: 10
+      FLYWAY_VALIDATE_MIGRATION_NAMING: "true"
+      FLYWAY_CLEAN_DISABLED: "true"
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: "no"
+
+  # Reversão sob demanda: desfaz a última migration versionada com undo/U<n>__*.sql.
+  # - Perfil tools: não sobe no `up`; rode `docker compose run --rm database-undo`.
+  # - Existe porque o Flyway Community não tem o comando undo.
+  database-undo:
+    build:
+      context: ./database
+      dockerfile: undo.Dockerfile
+    profiles: ["tools"]
+    environment:
+      PGHOST: database
+      PGUSER: ${POSTGRES_USER:-wagering}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-wagering}
+      PGDATABASE: ${POSTGRES_DB:-wagering}
+    depends_on:
+      database:
+        condition: service_healthy
+
+  # ===============================================================================================
+  # Fila: SQS emulado (MiniStack) e criação das filas
+  # ===============================================================================================
+
+  # MiniStack: emulador da API da AWS; aqui só o SQS é usado, na porta 4566.
+  # - Em memória: as filas e mensagens somem no restart; o queue-init as recria no próximo up.
+  # - Aceita qualquer credencial; na AWS real esse container não existe.
+  # - Healthcheck em Python porque a imagem não tem curl nem wget.
+  queue:
+    build:
+      context: ./queue
+    ports:
+      - "${SQS_PORT:-4566}:4566"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4566/_ministack/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Dono único das filas: cria a DLQ e depois a fila principal, com redrive apontando para ela.
+  # - Faz o papel do Terraform/CloudFormation; a aplicação nunca cria fila.
+  # - Idempotente: rodar de novo com os mesmos atributos não muda nada.
+  # - maxReceiveCount (10) precisa ser maior que SQS_MAX_ATTEMPTS (5) do worker.
+  queue-init:
+    build:
+      context: ./queue
+      dockerfile: init.Dockerfile
+    environment:
+      <<: *sqs-env
+      SQS_VISIBILITY_TIMEOUT_SECONDS: 30
+      SQS_REDRIVE_MAX_RECEIVE_COUNT: 10
+    depends_on:
+      queue:
+        condition: service_healthy
+    restart: "no"
+
+  # ===============================================================================================
+  # Aplicação: mesma imagem (./api) em dois processos, api (HTTP) e worker (fila)
+  # ===============================================================================================
+
+  # API HTTP (NestJS + Bun): só atende requisições; não consome fila.
+  # - Sem container_name nem porta publicada: escala com --scale api=3 e é acessada pelo nginx.
+  # - Readiness (/health/ready) testa PostgreSQL e SQS; o healthcheck usa /health/live.
+  # - Espera as migrations e as filas: sem schema ou sem fila, a api não teria como funcionar.
+  api:
+    build:
+      context: ./api
+    command: ["bun", "src/main.ts"]
+    environment:
+      <<: [*app-env, *sqs-env]
+      PORT: 3000
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-true}
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+      queue-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r = await fetch('http://localhost:3000/health/live'); process.exit(r.ok ? 0 : 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Worker: mesma imagem da api, outro entrypoint; consumer SQS e tarefas de fundo, sem HTTP.
+  # - Escala com --scale worker=N; várias réplicas são seguras por inbox e lock por wallet.
+  # - Sem HTTP, o healthcheck lê o heartbeat: arquivo atualizado só com PostgreSQL e SQS de pé.
+  # - stop_grace_period dá tempo de terminar a mensagem em andamento antes do SIGKILL.
+  worker:
+    build:
+      context: ./api
+    command: ["bun", "src/main.worker.ts"]
+    environment:
+      <<: [*app-env, *sqs-env]
+      SQS_WAIT_TIME_SECONDS: 20
+      SQS_MAX_MESSAGES: 10
+      SQS_MAX_ATTEMPTS: 5
+      WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+    depends_on:
+      database-init:
+        condition: service_completed_successfully
+      queue-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const { statSync } = require('node:fs'); process.exit(Date.now() - statSync('/tmp/worker-heartbeat').mtimeMs < 30000 ? 0 : 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # ===============================================================================================
+  # Entrada HTTP: proxy reverso e balanceamento entre as réplicas da api
+  # ===============================================================================================
+
+  # nginx: única porta HTTP publicada (8080); balanceia entre as réplicas da api.
+  # - Descobre réplicas novas pelo DNS do Docker (resolver 127.0.0.11 + resolve no upstream).
+  # - Repassa o X-Request-Id do cliente, ou gera um: vira o correlationId de erros e logs.
+  # - Não repete 503 em outra réplica: falha transitória é resposta de negócio da api.
+  nginx:
+    build:
+      context: ./nginx
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+# =================================================================================================
+# Volumes: só dados persistentes (nenhum bind mount)
+# =================================================================================================
+
+volumes:
+  database-data:
+  prometheus-data:
+  loki-data:
+  grafana-data:

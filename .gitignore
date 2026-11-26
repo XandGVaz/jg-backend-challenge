@@ -1,0 +1,143 @@
+# ---- Agentes / IA (configuração local, não versionada)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+SKILL*.md
+.cursor/
+.cursorrules
+.aider*
+.codex/
+.gemini/
+.windsurf/
+.copilot/
+.playwright-mcp/
+
+# ---- Variáveis de ambiente e segredos
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials*.json
+
+# ---- Dependências
+node_modules/
+.pnp
+.pnp.*
+.yarn/
+jspm_packages/
+bower_components/
+
+# ---- Build e artefatos gerados
+dist/
+build/
+out/
+.output/
+*.tsbuildinfo
+.turbo/
+.cache/
+.parcel-cache/
+.swc/
+.nest/
+*.js.map
+
+# ---- Testes e cobertura
+coverage/
+.nyc_output/
+junit*.xml
+test-results/
+reports/
+*.lcov
+
+# ---- Logs e processos
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
+lerna-debug.log*
+*.pid
+*.pid.lock
+*.seed
+
+# ---- Lockfiles de outros gerenciadores (o projeto usa bun.lock)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ---- Dados locais de containers e emuladores
+.docker-data/
+pgdata/
+postgres-data/
+.localstack/
+.ministack/
+volume/
+docker-compose.override.yml
+compose.override.yml
+
+# ---- Teste de carga (resultados brutos)
+*.har
+k6-results/
+load-results/
+
+# ---- LaTeX (fonte e auxiliares; o PDF gerado é versionado)
+*.tex
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.synctex(busy)
+*.toc
+*.xdv
+*.nav
+*.snm
+*.vrb
+_minted*/
+
+# ---- IDEs e editores
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ---- Sistema operacional
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.directory
+.Trash-*
+.nfs*
+
+# ---- Temporários
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+*.rej
