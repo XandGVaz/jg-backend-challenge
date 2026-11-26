@@ -23,7 +23,11 @@ Validadas por Zod na inicialização (`api/src/config/env.ts`). Variável invál
 | --- | --- | --- |
 | `NODE_ENV` | `production` | `development` liga o debug do MikroORM |
 | `PORT` | `3000` | porta HTTP |
-| `DATABASE_URL` | montada a partir de `POSTGRES_*` | conexão com o [database](database.md) |
+| `DATABASE_URL` | montada a partir de `POSTGRES_*` | conexão com o [database](database.md); se ausente, é montada de `DB_*` |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | ausentes / `5432` | alternativa à `DATABASE_URL` para segredos injetados um a um (Secrets Manager no ECS); usuário e senha são codificados na URL |
+| `DATABASE_SSL_MODE` | `disable` | `require` cifra sem validar o certificado; `verify-full` valida cadeia e host |
+| `DATABASE_SSL_CA_FILE` | ausente | CA usada no `verify-full`; ausente = raízes públicas (basta para o RDS Proxy). A imagem traz o bundle do RDS em `/etc/ssl/certs/rds-global-bundle.pem` |
+| `DATABASE_POOL_MIN` / `DATABASE_POOL_MAX` | `0` / `10` | pool por réplica; a soma de api e workers precisa caber no `max_connections` do banco ou do proxy |
 | `SWAGGER_ENABLED` | `true` | expõe `/docs` e `/docs-json` |
 | `OTEL_ENABLED` | `true` | exporta traces, métricas e logs |
 | `OTEL_SERVICE_NAME` | `wagering-api` | vira `job` no Prometheus e `service_name` no Loki |
@@ -104,6 +108,15 @@ bun install
 DATABASE_URL=postgres://wagering:wagering@localhost:5433/wagering bun run start:dev
 bun run typecheck && bun run lint && bun test
 ```
+
+### 5.1 Na AWS
+
+A mesma imagem roda no ECS Fargate atrás de um ALB, sem mudança de código:
+
+- **SQS:** não defina `SQS_ENDPOINT` nem `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`. O SDK usa o endpoint da região e as credenciais temporárias da task role.
+- **Banco:** injete `DB_USER`/`DB_PASSWORD` do Secrets Manager (`secrets` da task definition, chaves `username`/`password` do segredo do RDS) e aponte `DB_HOST` para o endpoint do RDS Proxy. Use `DATABASE_SSL_MODE=verify-full`; conectando direto na instância, acrescente `DATABASE_SSL_CA_FILE=/etc/ssl/certs/rds-global-bundle.pem`.
+- **Correlation id:** o ALB não envia `X-Request-Id`. Sem o header, a api gera um UUID, e devolve o valor no header `X-Request-Id` da resposta em todos os casos.
+- **Flyway (`database-init`):** roda como task ECS avulsa antes do deploy, com `FLYWAY_URL=jdbc:postgresql://<host>:5432/<db>?sslmode=verify-full` e o usuário de migração.
 
 ## 6. Shutdown
 
@@ -249,8 +262,10 @@ TransactionView = {
 Regras de referência, no schema (`.superRefine`, para responder 400 cedo) e de novo em `WagerTransaction.create`:
 
 - `REFUND` e `ROLLBACK` exigem `referenceExternalTransactionId`.
-- `BET` e `LOSS` não aceitam referência. `WIN` aceita opcionalmente.
+- `BET` e `LOSS` não aceitam referência (`400`; ESCOLHAS #21). `WIN` aceita opcionalmente.
 - Existência, rodada e valor da referência são regras de domínio: viram `failureCode` (seção 10).
+- `WIN` com referência que não existe é processado sem ligação (`referenceTransactionId` ausente); se a referência existir, vale a regra 2 da §7 (`REFERENCE_MISMATCH`). `REFUND` e `ROLLBACK` sem referência encontrada vão para `PENDING_REFERENCE`.
+- Uma `BET` aceita um único estorno, `REFUND` ou `ROLLBACK`. O `ROLLBACK` de um `REFUND` é aceito, e a `BET` volta a valer, mas não recebe outro `REFUND` (ESCOLHAS #21).
 
 `TransactionView` nunca expõe `payloadHash`.
 
@@ -300,7 +315,7 @@ export function payloadHash(payload: SubmitTransactionRequest): string {
 ErrorResponse = {
   statusCode: int, code: string, message: string,
   details: { path: string, message: string }[],
-  correlationId?: string,      // X-Request-Id do nginx
+  correlationId?: string,      // X-Request-Id do nginx, ou gerado pela api quando falta
   path: string, timestamp: string,
   transactionId?: uuidv7,      // só em TransactionRejectedError (a implementar)
 }
@@ -320,8 +335,10 @@ Enum `FailureCode` do domínio, gravado em `wager_transactions.failure_code`, de
 | `REFERENCE_MISMATCH` | REJECTED | referência de outro provider, player, wallet, moeda ou rodada | corrigir o payload |
 | `REFERENCE_KIND_NOT_ALLOWED` | REJECTED | `REFUND` sem `BET`, ou `ROLLBACK` de `LOSS`/`ROLLBACK`/`OPENING` | corrigir o payload |
 | `REFERENCE_NOT_PROCESSED` | REJECTED | referência existe mas está `REJECTED` ou `FAILED` | desistir |
-| `REFERENCE_ALREADY_REVERSED` | REJECTED | a referência já teve `REFUND`/`ROLLBACK` do mesmo tipo | desistir (duplicata de negócio) |
+| `REFERENCE_ALREADY_REVERSED` | REJECTED | a referência já foi estornada: uma `BET` aceita um único `REFUND` ou `ROLLBACK`; as demais, um `ROLLBACK` | desistir (duplicata de negócio) |
 | `REVERSAL_AMOUNT_MISMATCH` | REJECTED | valor ≠ valor da referência | corrigir o payload |
+| `BET_ALREADY_CANCELLED` | REJECTED | `BET` que chega depois de um `REFUND` rejeitado que a citava (ESCOLHAS #21) | desistir |
+| `ROUND_CLOSED` | REJECTED | `BET` numa rodada já fechada por `WIN` ou `LOSS` (ESCOLHAS #21) | desistir |
 | `PROCESSING_RETRIES_EXHAUSTED` | FAILED | erro transitório persistiu além do limite (vai para DLQ) | reenviar mais tarde |
 
 `WALLET_NOT_FOUND` **não** é `failureCode`: sem wallet não há transação a persistir (FK `wager_transactions.wallet_id → wallets.id`), então é `404` sem registro (seção 11).
@@ -400,6 +417,7 @@ Serializado em `outbox_messages.payload` e publicado como body:
 - `aggregateId`: `walletId` em `WalletBalanceChanged`, `transactionId` nos eventos de transação.
 - `data` só tem primitivos JSON e `MoneyProps`. Datas como string ISO.
 - Publicação at-least-once. O consumidor deduplica por `eventId`.
+- Destino: fila `wallet-events.fifo`, com `MessageGroupId = aggregateId` e `MessageDeduplicationId = eventId` (ESCOLHAS #28).
 
 ### 13.2 `data` de cada evento (version 1)
 

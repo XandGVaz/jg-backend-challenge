@@ -12,7 +12,7 @@
 ## Comportamento
 
 - **Descoberta de réplicas:** `resolver 127.0.0.11 valid=10s` com `server api:3000 resolve` numa `zone` compartilhada. O nginx reavalia o DNS do Docker e passa a enxergar réplicas novas depois de um `--scale`, sem restart.
-- **Correlation id:** preserva o `X-Request-Id` do cliente. Se ele não vier, gera um (`$request_id`). O valor segue para a api, aparece no `correlationId` das respostas de erro e no baggage OTel.
+- **Correlation id:** preserva o `X-Request-Id` do cliente. Se ele não vier, gera um (`$request_id`). O valor segue para a api (que gera um próprio quando roda sem o nginx, como atrás de um ALB), aparece no `correlationId` das respostas de erro e no baggage OTel.
 - **Retry entre réplicas:** `proxy_next_upstream error timeout`. Só falha de conexão ou timeout troca de réplica. Um `503` da api é resposta de negócio (falha transitória) e volta para o cliente: repetir em outra réplica poderia mascarar o problema.
 - **Keepalive** de 32 conexões para o upstream (`proxy_http_version 1.1`, `Connection ""`).
 - Limites: `client_max_body_size 1m`, `proxy_connect_timeout 2s`, `proxy_read_timeout 30s`.

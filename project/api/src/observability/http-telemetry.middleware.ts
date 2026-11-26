@@ -8,6 +8,7 @@ import {
   type Context,
   type Histogram,
 } from '@opentelemetry/api';
+import { randomUUID } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 
 export const CORRELATION_ID_BAGGAGE_KEY = 'correlation.id';
@@ -31,7 +32,7 @@ function getRequestDuration(): Histogram {
 
 /** Span SERVER, contexto W3C, baggage com o correlationId e histograma de latência por rota. */
 export function httpTelemetry(request: Request, response: Response, next: NextFunction): void {
-  const correlationId = request.header('x-request-id');
+  const correlationId = ensureCorrelationId(request, response);
   const parent = withCorrelationId(
     propagation.extract(context.active(), request.headers),
     correlationId,
@@ -43,7 +44,7 @@ export function httpTelemetry(request: Request, response: Response, next: NextFu
       attributes: {
         'http.request.method': request.method,
         'url.path': request.path,
-        'correlation.id': correlationId ?? '',
+        'correlation.id': correlationId,
       },
     },
     parent,
@@ -78,6 +79,14 @@ export function httpTelemetry(request: Request, response: Response, next: NextFu
   response.on('finish', end);
   response.on('close', end);
   context.with(trace.setSpan(parent, span), next);
+}
+
+// Atrás do nginx o header já vem; o ALB não gera X-Request-Id, então a api cria um quando falta.
+function ensureCorrelationId(request: Request, response: Response): string {
+  const correlationId = request.header('x-request-id') || randomUUID();
+  request.headers['x-request-id'] = correlationId;
+  response.setHeader('X-Request-Id', correlationId);
+  return correlationId;
 }
 
 /** Coloca o correlationId no baggage; também usado pelo consumer SQS. */

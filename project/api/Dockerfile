@@ -9,6 +9,8 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json tsconfig.json ./
 COPY src ./src
+# Bundle de CA do RDS, para DATABASE_SSL_MODE=verify-full direto na instância (o RDS Proxy não precisa).
+ADD --chmod=444 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/certs/rds-global-bundle.pem
 USER bun
 EXPOSE 3000
 CMD ["bun", "src/main.ts"]
