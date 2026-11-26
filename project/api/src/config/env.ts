@@ -8,6 +8,7 @@ const EnvSchema = z.object({
   OTEL_ENABLED: z.stringbool().default(false),
   OTEL_SERVICE_NAME: z.string().min(1).default('wagering-api'),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url().default('http://localhost:4318'),
+  OPTIMISTIC_LOCK_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(5),
   AWS_REGION: z.string().min(1).default('us-east-1'),
   // Só no emulador (MiniStack); na AWS o SDK resolve o endpoint pela região.
   SQS_ENDPOINT: z.url().optional(),

@@ -23,7 +23,7 @@ Dentro da rede do Compose a URL é `postgres://wagering:wagering@database:5432/w
 
 ## Schema
 
-O schema não é criado pelo container nem pelo ORM: ele vem das migrations SQL de `database/migrations/`, aplicadas pelo serviço [`database-init`](database-init.md). Toda mudança de schema é uma migration nova `V<n>__` com a reversão `database/undo/U<n>__`. Regras na skill [jungle-gaming-database](../database/SKILL.md).
+O schema não é criado pelo container nem pelo ORM: ele vem das migrations SQL de `database/migrations/`, aplicadas pelo serviço [`database-init`](database-init.md). Toda mudança de schema é uma migration nova `V<n>__` com a reversão `database/undo/U<n>__`.
 
 ## Operação
 

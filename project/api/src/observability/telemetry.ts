@@ -8,6 +8,7 @@ import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { BatchSpanProcessor } from '@opentelemetry/sdk-trace';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+import pkg from '../../package.json' with { type: 'json' };
 import type { Env } from '../config/env.js';
 
 type TelemetryEnv = Pick<
@@ -31,7 +32,7 @@ export function startTelemetry(env: TelemetryEnv): void {
   sdk = new NodeSDK({
     resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: env.OTEL_SERVICE_NAME,
-      [ATTR_SERVICE_VERSION]: '0.1.0',
+      [ATTR_SERVICE_VERSION]: pkg.version,
       'service.instance.id': hostname(),
       'deployment.environment.name': env.NODE_ENV,
     }),

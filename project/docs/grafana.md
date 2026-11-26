@@ -1,6 +1,6 @@
 # grafana — dashboards e exploração
 
-Interface única para métricas ([Prometheus](prometheus.md)), logs ([Loki](loki.md)) e traces ([Jaeger](jaeger.md)). Datasources e dashboards são provisionados a partir do repositório. As seções 5 a 9 são a **referência do formato dos dashboards**. A skill `jungle-gaming-observability` diz como aplicá-las.
+Interface única para métricas ([Prometheus](prometheus.md)), logs ([Loki](loki.md)) e traces ([Jaeger](jaeger.md)). Datasources e dashboards são provisionados a partir do repositório. As seções 5 a 9 são a **referência do formato dos dashboards**.
 
 ## 1. Container
 

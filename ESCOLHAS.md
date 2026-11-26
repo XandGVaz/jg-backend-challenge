@@ -24,6 +24,11 @@ Seções 4 e 10
 
 Justificativa:
 
+- **Mesmo emulador no Compose e nos testes (#11):** os testes de integração rodam contra o mesmo serviço que o ambiente local usa (`project/docs/queue.md`).
+- **Cobre o que o desafio usa:** filas FIFO, `MessageGroupId`, `MessageDeduplicationId`, `ChangeMessageVisibility` e `RedrivePolicy` para a DLQ. O `sqs-poller.e2e.spec.ts` exercita esse caminho contra o MiniStack.
+- **Imagem fixada** (`ministackorg/ministack:1.5.44`), com healthcheck próprio (`/_ministack/health`). As filas são criadas pelo `queue-init`, o dono único delas.
+- <!-- revisar: motivo da escolha frente ao LocalStack (tamanho da imagem, tempo de subida, licença?) -->
+
 ### 3. Autenticação
 Seção 2 · Justificar no ARCHITECTURE.md. Se não implementar, descrever o desenho que adotaria
 - [ ] Implementar com IdP externo: Keycloak
@@ -32,6 +37,11 @@ Seção 2 · Justificar no ARCHITECTURE.md. Se não implementar, descrever o des
 - [x] Não implementar
 
 Justificativa:
+
+- **Não vale pontos** (§2 e §14) e não deve competir com correção financeira, concorrência e idempotência pelo tempo disponível.
+- **Desenho que seria adotado:** IdP externo (Keycloak ou Zitadel) com OAuth2 *client credentials*, uma credencial por provedor. O `providerId` do token tem de coincidir com o do payload.
+- **Fila:** canal interno confiável, mas o `providerId` da mensagem continua passando pelas validações de domínio (§2).
+- O ponto de extensão no código é o #3a, ainda em aberto.
 
 ### 3a. Ponto de extensão (se não implementar autenticação)
 Seção 2
@@ -50,12 +60,23 @@ Seção 8 · Justificar no ARCHITECTURE.md
 
 Justificativa:
 
+- **Sem lock na leitura:** a transação lê a wallet sem bloquear e grava com `UPDATE … WHERE version = :lida`. Wallets diferentes nunca disputam, e não existe lock global (§5.6).
+- **Retry da transação inteira:** em `OptimisticLockError`, o `runTransaction` (`api/src/database/run-transaction.ts`) refaz a leitura e a regra, porque o saldo pode ter mudado e a decisão pode virar rejeição (cenário da §8). Até `OPTIMISTIC_LOCK_MAX_ATTEMPTS` tentativas (5 por padrão).
+- **Esgotado = falha transitória:** `503 CONCURRENCY_CONFLICT` no HTTP, ou mensagem sem ack na fila. Nada foi gravado, então reenviar com a mesma key é seguro.
+- **Conflito é raro no caminho normal:** `MessageGroupId = walletId` já serializa a maior parte do tráfego da fila por wallet. O que sobra (HTTP concorrente, réplicas) é coberto pelo retry.
+- **Observável:** `wagering.lock.conflicts{use_case}` e `wagering.retries{operation="optimistic_lock"}`, e um span `db.transaction` por tentativa.
+- **Por que não pessimista:** `SELECT … FOR UPDATE` seguraria o lock da wallet durante toda a transação, inclusive leituras, e serializaria também o caso sem disputa. Um modo híbrido para wallet muito disputada fica para o teste de carga (ponto em aberto no `architecture.pdf`).
+- **Defesa em profundidade:** `CHECK (balance_amount >= 0)`, aritmética do lançamento verificada no banco e `UNIQUE (wallet_id, transaction_id)` no ledger barram o erro mesmo com defeito na aplicação.
+
 ### 5. Uso do `version` da Wallet
 Seção 6.2 · Justificar se não for optimistic locking
 - [x] Optimistic locking (sugerido)
 - [ ] Outra estratégia
 
 Justificativa:
+
+- É o mecanismo do #4: `version` começa em 1 e só incrementa quando o saldo muda (§6.2), então serve de token de concorrência sem gerar conflito em operações que não mexem no saldo (`LOSS`, rejeições).
+- Será mapeado como propriedade versionada do MikroORM (`LockMode.OPTIMISTIC`), que gera o `WHERE version = :v` e lança `OptimisticLockError` quando nenhuma linha é afetada. O mapeamento da wallet ainda não existe.
 
 ### 6. Escopo de moedas
 Seção 6.1
@@ -71,12 +92,21 @@ Seção 6.1 · Justificar no ARCHITECTURE.md (mapeamento do `Money`)
 
 Justificativa:
 
+- **Representação exata:** `amount numeric(20, 2)`, nunca `real`/`double precision`. O tipo `decimal` do MikroORM hidrata a coluna como string, que vira `Money` no repository via `Money.from`. Em nenhum ponto o valor passa por `number` (falha eliminatória, §14).
+- **Escala validada antes do banco:** o `numeric` arredondaria um valor com mais de 2 casas, então o schema Zod e o `Money.from` recusam esse valor antes.
+- **Moeda em coluna própria (`char(3)`)** permite garantias no banco: wallet única por `(player_id, currency)` e FK composta `(wallet_id, currency)` que obriga o lançamento a usar a moeda da wallet.
+
 ### 8. Formato da `Idempotency-Key`
 Seção 9
 - [x] `{providerId}:{externalTransactionId}` (default recomendado)
 - [ ] Outro formato
 
 Justificativa:
+
+- **Derivável pelo provedor:** `{providerId}:{externalTransactionId}` pode ser recalculado a qualquer momento, sem o provedor guardar estado. Um reenvio depois de timeout tem a mesma key.
+- **Única entre provedores:** o prefixo evita colisão de `externalTransactionId` iguais em provedores diferentes.
+- **O header é a fonte da verdade:** a API não recalcula a key a partir do body nem a compara com ele (`project/docs/api.md` §9.4). O formato é a recomendação para o provedor.
+- **Garantida no banco:** `UNIQUE (idempotency_key)` e, de forma independente, `UNIQUE (provider_id, external_transaction_id)`.
 
 ### 9. Fim do reprocessamento de `PENDING_REFERENCE`
 Seção 7.1 · Justificar o critério e o valor
@@ -85,6 +115,10 @@ Seção 7.1 · Justificar o critério e o valor
 
 Justificativa:
 
+- **Não expira com o worker parado:** as tentativas só avançam quando o agendador roda. Com TTL, uma queda do worker maior que o prazo rejeitaria pendências que nunca foram tentadas.
+- **Estado simples no banco:** `reference_attempts` e `next_reference_attempt_at` na própria `wager_transactions`, com índice parcial para as `PENDING_REFERENCE`.
+- Os valores (limite, base e teto do backoff) são o #15, ainda em aberto.
+
 ### 10. Ledger
 Seção 6.4
 - [x] Entrada simples por wallet
@@ -92,12 +126,19 @@ Seção 6.4
 
 Justificativa:
 
+- **Atende ao que a §6.4 exige:** no máximo um lançamento por wallet em cada transação (`UNIQUE (wallet_id, transaction_id)`), com `balanceBefore`, `balanceAfter` e a aritmética verificada no banco.
+- **Reconciliação direta:** o saldo da wallet é a soma dos lançamentos na ordem `(created_at, id)`, que é a invariante final de todos os testes (§13).
+- **Partidas dobradas é diferencial opcional (#26):** exigiria uma conta da casa como contrapartida e dois lançamentos por transação, aumentando a superfície de erro justamente na área de correção financeira (20 pontos).
+
 ### 11. Ambiente de testes de integração
 Seção 13
 - [ ] LocalStack em container
 - [x] MiniStack em container
 
 Justificativa:
+
+- **Containers reais, não mocks:** a §13 exige PostgreSQL e SQS reais, e substituí-los por mocks é falha eliminatória (§14).
+- **Mesmo emulador do ambiente local (#2):** um único conjunto de comportamentos para conhecer. Os e2e de SQS rodam contra o `queue` do Compose (`SQS_ENDPOINT=http://localhost:4566 bun test test`) e são pulados sem `SQS_ENDPOINT`.
 
 ## Decisões abertas sem alternativas nomeadas
 
@@ -129,7 +170,7 @@ O enunciado deixa a escolha com você, mas não lista opções. Marque quando es
   - **Referência quebrada em cinco códigos** (`NOT_FOUND`, `MISMATCH`, `KIND_NOT_ALLOWED`, `NOT_PROCESSED`, `ALREADY_REVERSED`) porque cada um corresponde a uma regra distinta da seção 7 (regras 2 a 4 e 7.1) e tem ação diferente: só `REFERENCE_NOT_FOUND` admite que a referência ainda chegue.
   - **`WALLET_NOT_FOUND` não é `failureCode`:** sem wallet não há onde ancorar a transação. Persistir uma `REJECTED` exigiria tirar a FK `wager_transactions.wallet_id → wallets.id`, enfraquecendo o schema que a seção 5.9 avalia. Vira `404` sem registro (ver #16). `WALLET_PLAYER_MISMATCH` continua `failureCode`, porque a wallet existe.
   - **`FAILED` tem código próprio** (`PROCESSING_RETRIES_EXHAUSTED`) para ficar auditável e não ser confundido com rejeição de negócio: o payload estava correto, a infraestrutura é que falhou.
-  - **Estabilidade:** código publicado nunca é renomeado nem reaproveitado. Código novo entra no enum, no Swagger e na skill na mesma alteração, porque provedores podem ter lógica amarrada ao valor.
+  - **Estabilidade:** código publicado nunca é renomeado nem reaproveitado. Código novo entra no enum, no Swagger e em `project/docs/api.md` §10 na mesma alteração, porque provedores podem ter lógica amarrada ao valor.
 - [ ] **15. Limite de tentativas / TTL e backoff de `PENDING_REFERENCE`** (7.1): valores definidos e justificados.
 - [x] **16. Mapeamento de status HTTP** (9): distinguir payload inválido, conflito de idempotência, rejeição de negócio, aceite pendente e falha transitória, de forma consistente.
 

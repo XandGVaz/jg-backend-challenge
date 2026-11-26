@@ -2,7 +2,7 @@
 
 Serviço financeiro: API HTTP (wallets, wagering, ledger, reconciliação, health). Roda em várias réplicas atrás do [nginx](nginx.md). O mesmo código, com outro entrypoint, roda os workers (consumer SQS, publisher da outbox, reprocessamento de `PENDING_REFERENCE`) no serviço [worker](worker.md).
 
-As seções 7 a 13 são a **referência dos contratos de dados** (DTOs). A skill `jungle-gaming-dto` diz como aplicá-las.
+As seções 7 a 13 são a **referência dos contratos de dados** (DTOs).
 
 ## 1. Container
 
@@ -28,6 +28,7 @@ Validadas por Zod na inicialização (`api/src/config/env.ts`). Variável invál
 | `OTEL_ENABLED` | `true` | exporta traces, métricas e logs |
 | `OTEL_SERVICE_NAME` | `wagering-api` | vira `job` no Prometheus e `service_name` no Loki |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4318` | [otel-collector](otel-collector.md) |
+| `OPTIMISTIC_LOCK_MAX_ATTEMPTS` | `5` | tentativas da transação em conflito de bloqueio otimista, contando a primeira; esgotadas, `503 CONCURRENCY_CONFLICT` (`runTransaction`, `api/src/database/run-transaction.ts`) |
 | `AWS_REGION` | `us-east-1` | região do SQS |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `test` / `test` | só no emulador; lidas pela cadeia padrão do SDK, fora do schema Zod. Na AWS vêm da IAM role |
 | `SQS_ENDPOINT` | `http://queue:4566` | só no emulador ([queue](queue.md)); ausente = endpoint real da região |
@@ -81,7 +82,7 @@ src/modules/
 | Service | `services/` | abre a transação, orquestra repositories e domínio, lança `AppError` | conhecer HTTP, escrever SQL |
 | Repository | `repositories/` | consulta, lock, `persist`, traduz violação de constraint para `AppError` | `flush`, transação, regra de negócio, DDL |
 
-`wallets` e `wagering` já estão registrados no `AppModule`, ainda sem controllers nem providers. As pastas vazias têm `.gitkeep`. O schema das tabelas que eles vão mapear está em `database/migrations/V1__initial_schema.sql` ([flyway.md](database-init.md)). Regras completas das camadas: skill `jungle-gaming-api`, seção 1.1.
+`wallets` e `wagering` já estão registrados no `AppModule`, ainda sem controllers nem providers. As pastas vazias têm `.gitkeep`. O schema das tabelas que eles vão mapear está em `database/migrations/V1__initial_schema.sql` ([flyway.md](database-init.md)).
 
 ## 4. Telemetria
 

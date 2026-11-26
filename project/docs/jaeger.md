@@ -1,6 +1,6 @@
 # jaeger — traces
 
-Armazena e mostra os traces distribuídos. Recebe spans do [otel-collector](otel-collector.md) e serve de datasource para o [Grafana](grafana.md). As seções 4 a 6 são a **referência de traces e spans** da aplicação. A skill `jungle-gaming-observability` diz como aplicá-las.
+Armazena e mostra os traces distribuídos. Recebe spans do [otel-collector](otel-collector.md) e serve de datasource para o [Grafana](grafana.md). As seções 4 a 6 são a **referência de traces e spans** da aplicação.
 
 ## 1. Container
 

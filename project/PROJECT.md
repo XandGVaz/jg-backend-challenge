@@ -48,7 +48,7 @@ api (OTLP/HTTP) ──> otel-collector ──> Jaeger      (traces)
 - Logs: uma linha JSON por evento no stdout (`docker compose logs api`) e o mesmo registro no Loki, com `correlationId`, `traceId` e `spanId`.
 - No Grafana, um log leva ao trace no Jaeger pelo `trace_id`, e um trace leva aos logs.
 - `OTEL_ENABLED=false` desliga a exportação; a API continua logando JSON no stdout.
-- Esquemas: métricas em [docs/prometheus.md](docs/prometheus.md), spans e propagação em [docs/jaeger.md](docs/jaeger.md), campos de log em [docs/loki.md](docs/loki.md), dashboards em [docs/grafana.md](docs/grafana.md). Regras na skill [jungle-gaming-observability](observability/SKILL.md).
+- Esquemas: métricas em [docs/prometheus.md](docs/prometheus.md), spans e propagação em [docs/jaeger.md](docs/jaeger.md), campos de log em [docs/loki.md](docs/loki.md), dashboards em [docs/grafana.md](docs/grafana.md).
 
 O serviço `database-init` aplica as migrations SQL de `database/migrations/` uma única vez e termina; as réplicas da `api` só sobem depois que ele conclui com sucesso. O schema é SQL puro: o MikroORM só acessa dados.
 
@@ -97,14 +97,3 @@ Nova mudança de schema: `database/migrations/V<n>__<descricao>.sql` e a revers�
 
 - [REQUISITOS.md](../REQUISITOS.md): enunciado do desafio.
 - [ESCOLHAS.md](../ESCOLHAS.md): opções em aberto e as escolhidas.
-
-### Skills dos agentes (`SKILL*.md` em cada pasta, não versionadas)
-
-Padrões que valem para qualquer alteração ou revisão do código:
-
-| Skill | Conteúdo |
-| --- | --- |
-| [jungle-gaming-api](api/SKILL.md) | camadas controller → service → repository, MikroORM (acesso a dados), estilo, guard clauses, ErrorHandler, Zod, Swagger e instrumentação |
-| [jungle-gaming-database](database/SKILL.md) | schema em SQL puro, migrations V/R/U com Flyway, reversão, garantias no banco e armadilhas do PostgreSQL |
-| [jungle-gaming-dto](api/SKILL-DTO.md) | regras dos contratos e o que conferir em [docs/api.md](docs/api.md) §7–§13 (Money, IDs, endpoints, SQS, eventos, `payloadHash`, `failureCode`, status HTTP) |
-| [jungle-gaming-observability](observability/SKILL.md) | regras de métricas, spans, logs e dashboards e o que conferir em `prometheus.md`, `jaeger.md`, `loki.md`, `grafana.md` e `otel-collector.md` |

@@ -10,6 +10,7 @@ Stack: NestJS 12 + Bun, MikroORM 7, PostgreSQL 18 + Flyway, SQS (emulado pelo Mi
 .
 ├── REQUISITOS.md            # enunciado do desafio
 ├── ESCOLHAS.md              # decisões em aberto e as escolhidas
+├── ARCHITECTURE.md          # decisões, trade-offs e limitações
 ├── system_architecture/     # documento de arquitetura (architecture.pdf)
 └── project/                 # código e infraestrutura
     ├── docker-compose.yml   # todos os serviços
@@ -51,6 +52,7 @@ A API fica em http://localhost:8080 (Swagger em `/docs`) e o Grafana em http://l
 ### Visão geral
 
 - [REQUISITOS.md](REQUISITOS.md): enunciado, regras de negócio, contratos esperados e critérios de avaliação.
+- [ARCHITECTURE.md](ARCHITECTURE.md): decisões, trade-offs, estratégia transacional, concorrência, idempotência e limitações conhecidas.
 - [ESCOLHAS.md](ESCOLHAS.md): cada decisão do projeto (ORM, concorrência, idempotência, ledger, autenticação...) com as alternativas consideradas.
 - [system_architecture/architecture.pdf](system_architecture/architecture.pdf): arquitetura, fluxos e diagramas.
 - [project/PROJECT.md](project/PROJECT.md): como subir, desenvolver e operar o ambiente.

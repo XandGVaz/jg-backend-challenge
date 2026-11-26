@@ -1,6 +1,6 @@
 # loki — logs
 
-Guarda os logs estruturados da api, recebidos por OTLP do [otel-collector](otel-collector.md). Consultado pelo [Grafana](grafana.md). As seções 5 e 6 são a **referência dos campos e níveis de log**. A skill `jungle-gaming-observability` diz como aplicá-las.
+Guarda os logs estruturados da api, recebidos por OTLP do [otel-collector](otel-collector.md). Consultado pelo [Grafana](grafana.md). As seções 5 e 6 são a **referência dos campos e níveis de log**.
 
 ## 1. Container
 

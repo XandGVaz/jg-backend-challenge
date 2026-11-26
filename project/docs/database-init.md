@@ -57,4 +57,4 @@ Reverter apaga dados. Com dados reais, desfaça com uma nova `V` em vez do `data
 2. `database/undo/U<mesmo número>__<mesma descricao>.sql` com a reversão.
 3. Teste: `database-init migrate`, `database-undo`, `database-init migrate`.
 
-Convenções, garantias do schema e armadilhas do PostgreSQL: skill [jungle-gaming-database](../database/SKILL.md).
+Regras: o schema só muda por migration SQL, uma migration aplicada nunca é editada (o Flyway recusa por checksum) e toda `V<n>` tem a reversão `undo/U<n>` com a mesma descrição.

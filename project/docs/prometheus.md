@@ -1,6 +1,6 @@
 # prometheus — métricas
 
-Coleta e guarda as métricas que o [otel-collector](otel-collector.md) expõe em `:8889`. É o datasource padrão do [Grafana](grafana.md). As seções 4 a 8 são a **referência das métricas** da aplicação. A skill `jungle-gaming-observability` diz como aplicá-las.
+Coleta e guarda as métricas que o [otel-collector](otel-collector.md) expõe em `:8889`. É o datasource padrão do [Grafana](grafana.md). As seções 4 a 8 são a **referência das métricas** da aplicação.
 
 ## 1. Container
 
