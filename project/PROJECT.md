@@ -98,7 +98,7 @@ Nova mudança de schema: `database/migrations/V<n>__<descricao>.sql` e a revers�
 - [REQUISITOS.md](../REQUISITOS.md): enunciado do desafio.
 - [ESCOLHAS.md](../ESCOLHAS.md): opções em aberto e as escolhidas.
 
-
+### Skills dos agentes (`SKILL*.md` em cada pasta, não versionadas)
 
 Padrões que valem para qualquer alteração ou revisão do código:
 
