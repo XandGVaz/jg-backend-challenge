@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from './database/database.module.js';
+import { AuthModule } from './modules/auth/auth.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { WageringModule } from './modules/wagering/wagering.module.js';
 import { WalletsModule } from './modules/wallets/wallets.module.js';
@@ -11,6 +12,7 @@ import { HttpModule } from './shared/http/http.module.js';
     ObservabilityModule,
     HttpModule,
     DatabaseModule,
+    AuthModule,
     HealthModule,
     WalletsModule,
     WageringModule,

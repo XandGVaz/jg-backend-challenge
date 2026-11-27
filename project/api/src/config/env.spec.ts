@@ -33,4 +33,32 @@ describe('loadEnv', () => {
       }),
     ).toThrow(/DATABASE_POOL_MIN/);
   });
+
+  it('defaults the pending-reference policy, the idle timeout and the events queue', () => {
+    const env = loadEnv({ DATABASE_URL: 'postgres://u:p@db:5432/app' });
+
+    expect(env.PENDING_REFERENCE_MAX_ATTEMPTS).toBe(10);
+    expect(env.PENDING_REFERENCE_BACKOFF_BASE_SECONDS).toBe(2);
+    expect(env.PENDING_REFERENCE_BACKOFF_MAX_SECONDS).toBe(300);
+    expect(env.DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS).toBe(30000);
+    expect(env.SQS_WALLET_EVENTS_QUEUE).toBe('wallet-events.fifo');
+  });
+
+  it('fails when the pending-reference backoff base exceeds the max', () => {
+    expect(() =>
+      loadEnv({
+        DATABASE_URL: 'postgres://u:p@db:5432/app',
+        PENDING_REFERENCE_BACKOFF_BASE_SECONDS: '400',
+      }),
+    ).toThrow(/PENDING_REFERENCE_BACKOFF_BASE_SECONDS/);
+  });
+
+  it('fails when the wallet events queue name does not end with .fifo', () => {
+    expect(() =>
+      loadEnv({
+        DATABASE_URL: 'postgres://u:p@db:5432/app',
+        SQS_WALLET_EVENTS_QUEUE: 'wallet-events',
+      }),
+    ).toThrow(/\.fifo/);
+  });
 });

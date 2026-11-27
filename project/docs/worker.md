@@ -25,6 +25,8 @@ Além das da [api](api.md) (seção 2), exceto `PORT` e `SWAGGER_ENABLED`:
 | `SQS_MAX_ATTEMPTS` | `5` | entregas antes de a aplicação mandar para a DLQ (`ESCOLHAS.md` #19) |
 | `WORKER_HEARTBEAT_FILE` | `/tmp/worker-heartbeat` | arquivo lido pelo healthcheck |
 | `WORKER_HEARTBEAT_INTERVAL_MS` | `10000` | intervalo do heartbeat |
+| `PENDING_REFERENCE_MAX_ATTEMPTS` | `10` | tentativas do agendador antes de `REJECTED` com `REFERENCE_NOT_FOUND` (`ESCOLHAS.md` #15) |
+| `PENDING_REFERENCE_BACKOFF_BASE_SECONDS` / `PENDING_REFERENCE_BACKOFF_MAX_SECONDS` | `2` / `300` | base e teto do backoff exponencial entre tentativas, pela mesma função da fila |
 
 ## 3. Módulos
 
@@ -78,4 +80,12 @@ SQS_ENDPOINT=http://localhost:4566 bun test test/sqs-poller.e2e.spec.ts   # cont
 
 ## 7. Estado atual
 
-O processo, o transporte (`SqsPoller`) e o heartbeat estão prontos e testados contra o MiniStack. O consumer de `wager-transactions.fifo`, o publisher da outbox e o scheduler de `PENDING_REFERENCE` entram junto com o caso de uso de submit, que ainda não existe.
+Tudo implementado e exercitado contra a stack (3 réplicas da api, 2 do worker):
+
+| Peça | Arquivo | Comportamento |
+| --- | --- | --- |
+| Consumer de `wager-transactions.fifo` | `modules/wagering/messaging/wager-transactions.consumer.ts` + `.handler.ts` | inbox na transação do submit; negócio e `walletId` inexistente = ack; transitório = retry; entrega `SQS_MAX_ATTEMPTS` = `FAILED` + DLQ `retries_exhausted`; corpo inválido = DLQ `invalid_message` |
+| Agendador de `PENDING_REFERENCE` | `worker/pending-reference.scheduler.ts` | a cada 1 s reserva até 50 vencidas com `SKIP LOCKED` e chama `resume` de cada uma (que trava a linha de novo com `FOR UPDATE`) |
+| Publisher da outbox | `worker/outbox-publisher.loop.ts` | a cada 1 s publica lotes de 50 em `wallet-events.fifo`; enquanto o lote volta cheio, publica o próximo no mesmo ciclo (até 20 lotes) |
+
+Cada execução roda dentro de `RequestContext.create(em, ...)`, e as três peças param no `beforeApplicationShutdown`, terminando o que já começou. Com o gatilho imediato, um `REFUND` que chega antes da `BET` é resolvido cerca de 1 s depois de a `BET` chegar.

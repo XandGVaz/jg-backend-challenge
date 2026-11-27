@@ -17,6 +17,10 @@ export const ErrorResponseSchema = z
     correlationId: z.string().optional(),
     path: z.string().meta({ example: '/wagering/transactions' }),
     timestamp: z.iso.datetime(),
+    transactionId: z
+      .uuid()
+      .optional()
+      .meta({ description: 'Só na rejeição de negócio: a transação gravada como REJECTED' }),
   })
   .meta({ id: 'ErrorResponse' });
 

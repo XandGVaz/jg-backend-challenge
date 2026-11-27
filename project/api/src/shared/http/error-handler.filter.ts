@@ -7,7 +7,12 @@ import {
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { AppError, ErrorKind, type ErrorDetail } from '../errors/index.js';
+import {
+  AppError,
+  ErrorKind,
+  TransactionRejectedError,
+  type ErrorDetail,
+} from '../errors/index.js';
 import type { ErrorResponse } from './error-response.schema.js';
 
 /** Mapeamento único categoria → status HTTP, consistente entre todos os endpoints. */
@@ -53,6 +58,9 @@ export class ErrorHandler implements ExceptionFilter {
       correlationId: request.header('x-request-id'),
       path: request.path,
       timestamp: new Date().toISOString(),
+      ...(exception instanceof TransactionRejectedError && {
+        transactionId: exception.transactionId,
+      }),
     };
 
     this.log(exception, body, request.method);

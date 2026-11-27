@@ -81,7 +81,7 @@ Seção 6.2 · Justificar se não for optimistic locking
 Justificativa:
 
 - É o mecanismo do #4: `version` começa em 1 e só incrementa quando o saldo muda (§6.2), então serve de token de concorrência sem gerar conflito em operações que não mexem no saldo (`LOSS`, rejeições).
-- Será mapeado como propriedade versionada do MikroORM (`LockMode.OPTIMISTIC`), que gera o `WHERE version = :v` e lança `OptimisticLockError` quando nenhuma linha é afetada. O mapeamento da wallet ainda não existe.
+- Não usa a versão automática do MikroORM: o domínio incrementa o `version` (#12), e o MikroORM compararia o valor já incrementado. O `WalletRepository.save` grava com `UPDATE wallets ... WHERE id = ? AND version = <lida>` e lança `OptimisticLockError` quando nenhuma linha muda, o que o `runTransaction` trata como conflito.
 
 ### 6. Escopo de moedas
 Seção 6.1
@@ -160,7 +160,7 @@ O enunciado deixa a escolha com você, mas não lista opções. Marque quando es
   Justificativa:
   - **A invariante fica dentro do aggregate:** não existe saldo alterado sem lançamento, porque o mesmo método produz os dois (§6.2: "toda alteração de saldo tem um lançamento correspondente").
   - **Erro de domínio para saldo insuficiente:** a `Wallet` não conhece o tipo da operação; o service decide se é `INSUFFICIENT_FUNDS` (aposta) ou `REVERSAL_INSUFFICIENT_FUNDS` (estorno) e grava a rejeição antes de responder.
-  - **`wallet_version` no ledger (V2):** cada lançamento grava o `version` resultante da wallet, com `UNIQUE (wallet_id, wallet_version)`. O banco recusa dois lançamentos gerados a partir da mesma versão (proteção contra lost update mesmo com defeito na aplicação), e o ledger ganha uma sequência sem buracos por wallet. Como o `version` só muda quando o saldo muda, `lançamentos = version - 1`, mais o de abertura quando houver saldo inicial. A migration ainda não foi escrita.
+  - **`wallet_version` no ledger (V2):** cada lançamento grava o `version` resultante da wallet, com `UNIQUE (wallet_id, wallet_version)`. O banco recusa dois lançamentos gerados a partir da mesma versão (proteção contra lost update mesmo com defeito na aplicação), e o ledger ganha uma sequência sem buracos por wallet. Como o `version` só muda quando o saldo muda, `lançamentos = version - 1`, mais o de abertura quando houver saldo inicial. Implementado na `V2__add_ledger_wallet_version_and_rounds.sql`, com backfill que começa em 2 nas wallets abertas sem saldo.
 - [x] **13. Transições válidas de `WagerTransaction`** (6.3): definidas e documentadas; estados terminais não transicionam.
 
   Decisão:
@@ -175,7 +175,7 @@ O enunciado deixa a escolha com você, mas não lista opções. Marque quando es
   - **`PENDING` só existe dentro da transação SQL:** a linha é inserida e sai dela num estado final ou em `PENDING_REFERENCE` antes do commit. Se o processo cair, o rollback do PostgreSQL desfaz tudo e nenhuma linha fica presa em `PENDING`; o reenvio com a mesma key processa do zero.
   - **`PENDING_REFERENCE → FAILED` só por infraestrutura:** quando o reprocessamento esgota as tentativas por falha transitória (`PROCESSING_RETRIES_EXHAUSTED`). Uma regra de negócio violada no reprocessamento vira `REJECTED` com o `failureCode` da regra, como define a §6.3.
   - **Transições validadas só no domínio:** os métodos `markProcessed`, `markPendingReference`, `reject` e `fail` lançam `InvalidTransactionStateError` fora da tabela. O banco já garante o que a §5.9 avalia: o trigger `guard_wager_transaction_update` recusa qualquer mudança em estado terminal e nos campos de negócio. Duplicar a tabela de transições num trigger criaria duas cópias da regra.
-  - **Processo travado com a transação aberta:** `idle_in_transaction_session_timeout` na conexão do MikroORM encerra a sessão e libera os bloqueios. Sem isso, um processo que trava sem cair seguraria os locks até a conexão morrer. Ainda não configurado.
+  - **Processo travado com a transação aberta:** `idle_in_transaction_session_timeout` na conexão do MikroORM encerra a sessão e libera os bloqueios. Sem isso, um processo que trava sem cair seguraria os locks até a conexão morrer. Configurado por `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` (30 s por padrão; `0` desliga), repassado ao `pg` pelo `driverOptions`.
 - [x] **14. Taxonomia de `failureCode`** (7, 7.2): códigos estáveis e legíveis por máquina; reversão sem saldo com código distinto de aposta sem saldo.
 
   Decisão: enum `FailureCode` do domínio, em `UPPER_SNAKE_CASE`, gravado em `wager_transactions.failure_code` e repetido no `code` do erro 422, no `TransactionView` e no evento `WagerTransactionRejected`. Tabela completa em `project/docs/api.md` §10.
@@ -205,7 +205,7 @@ O enunciado deixa a escolha com você, mas não lista opções. Marque quando es
   - **Estabilidade:** código publicado nunca é renomeado nem reaproveitado. Código novo entra no enum, no Swagger e em `project/docs/api.md` §10 na mesma alteração, porque provedores podem ter lógica amarrada ao valor.
 - [x] **15. Limite de tentativas / TTL e backoff de `PENDING_REFERENCE`** (7.1): valores definidos e justificados.
 
-  Decisão: **10 tentativas**, backoff exponencial com **base de 2 s e teto de 300 s** (2, 4, 8 … 256, 300, 300 s, cerca de 18,5 min no total, menos com jitter), pela mesma função de backoff da fila (`src/shared/messaging/retry-backoff.ts`). Os três valores são configuráveis por variável de ambiente (`PENDING_REFERENCE_MAX_ATTEMPTS`, `PENDING_REFERENCE_BACKOFF_BASE_SECONDS`, `PENDING_REFERENCE_BACKOFF_MAX_SECONDS`). Com **gatilho imediato**: ao processar uma transação referenciável, o service antecipa (`next_reference_attempt_at = now()`) as `PENDING_REFERENCE` que apontam para ela.
+  Decisão: **10 tentativas**, backoff exponencial com **base de 2 s e teto de 300 s** (2, 4, 8 … 256, 300, 300 s, cerca de 18,5 min no total, menos com jitter), pela mesma função de backoff da fila (`src/shared/messaging/retry-backoff.ts`). Os três valores são configuráveis por variável de ambiente (`PENDING_REFERENCE_MAX_ATTEMPTS`, `PENDING_REFERENCE_BACKOFF_BASE_SECONDS`, `PENDING_REFERENCE_BACKOFF_MAX_SECONDS`), já validadas no `env.ts`, e o `retryDelaySeconds` aceita base e teto. O agendador e o gatilho ainda não existem. Com **gatilho imediato**: ao processar uma transação referenciável, o service antecipa (`next_reference_attempt_at = now()`) as `PENDING_REFERENCE` que apontam para ela.
 
   Justificativa:
   - **Um padrão só de backoff no projeto:** a mesma função serve à fila e à referência, com parâmetros diferentes.
@@ -290,15 +290,21 @@ O enunciado deixa a escolha com você, mas não lista opções. Marque quando es
   | Rodada | **entidade com fechamento** (tabela `rounds`, única por `provider_id` + `round_id`, numa V2): o primeiro `WIN` ou `LOSS` fecha a rodada; depois disso, `BET` na rodada é `REJECTED` com `ROUND_CLOSED`, e `WIN`, `REFUND` e `ROLLBACK` continuam aceitos | torna explícita uma regra de jogo que, sem a entidade, o sistema não enxergaria; prêmios múltiplos e correções continuam possíveis |
   | `OPENING` com saldo inicial `0.00` | grava a transação `OPENING` `PROCESSED`, **sem lançamento** (o ledger exige `amount > 0` e o saldo não muda) | comprova a abertura da wallet no histórico sem violar a invariante "toda alteração de saldo tem lançamento" |
 
-  A tabela `rounds`, os códigos `ROUND_CLOSED` e `BET_ALREADY_CANCELLED` e a regra "uma reversão por `BET`" ainda não estão no schema nem no código.
+  No schema (`V2`): a tabela `rounds` com o guard `R__rounds_guard.sql` e a regra "uma reversão por `BET`" (`reference_kind` + `uq_wager_transactions_bet_reversal_once`). No código: `ROUND_CLOSED` e `BET_ALREADY_CANCELLED` no enum `FailureCode`. Falta a lógica que os aplica, que depende do caso de uso de submit.
 - [x] **22. Nomes e assinaturas do modelo de domínio** (6): podem ser adaptados se as garantias forem preservadas.
 
   Decisão: **manter os nomes e assinaturas do enunciado** (`Money.from`, `Wallet.open`, `rehydrate`, `markPendingReference`, `scheduleRetry`…). As únicas assinaturas que o enunciado deixa livres são as de `debit`/`credit` (#12).
 
   Justificativa: quem corrige procura as classes e métodos da §6; cada desvio teria de ser justificado no `ARCHITECTURE.md`.
+- [x] **29. Biblioteca decimal do `Money`** (6.1)
+
+  Decisão: **`decimal.js`**, encapsulada no `Money` (`src/shared/domain/money.ts`), com um construtor clonado de precisão alta para as operações não arredondarem.
+
+  Justificativa: biblioteca madura de precisão arbitrária e arredondamento configurável. Com a escala fixa de 2 casas, `bigint` em centavos também resolveria, mas `decimal.js` deixa espaço para divisão ou outras escalas sem trocar o tipo interno.
+
 - [x] **28. Destino dos eventos de integração** (11)
 
-  Decisão: uma fila **`wallet-events.fifo`**, com `MessageGroupId = aggregateId` e `MessageDeduplicationId = eventId`. Criada pelo `queue-init` junto com o publisher da outbox (ainda não existe).
+  Decisão: uma fila **`wallet-events.fifo`**, com `MessageGroupId = aggregateId` e `MessageDeduplicationId = eventId`. Criada pelo `queue-init`, sem redrive e com retenção de 14 dias; o nome chega à aplicação por `SQS_WALLET_EVENTS_QUEUE`. O publisher da outbox ainda não existe.
 
   Justificativa: o enunciado define os eventos, mas não o destino. Uma fila FIFO única é coberta pelo MiniStack e mantém a ordem por agregado. SNS FIFO com uma fila por consumidor só se justificaria com mais de um consumidor.
 
@@ -324,9 +330,9 @@ O enunciado deixa a escolha com você, mas não lista opções. Marque quando es
 - [x] **24. Dashboard de métricas** (12)
 
   Justificativa: o Grafana sobe já provisionado (datasources Prometheus, Loki e Jaeger, com links log ↔ trace) e com o dashboard **Wagering API** como página inicial. Ele mostra requisições/s, taxa de 5xx, latência p50/p95/p99 por rota, distribuição entre réplicas e logs de warn/error. Os painéis de negócio entram junto com as métricas da seção 12.
-- [ ] **25. Teste de carga** com `bun run test:load` (14)
+- [x] **25. Teste de carga** com `bun run test:load` (14)
 
-  Decisão (ainda não implementado): **k6 em container**, chamado por `bun run test:load` (o script sobe o container do k6 contra o nginx). Relatório com ambiente, metodologia, throughput, p50/p95/p99, taxa de erro, conflitos de concorrência e outbox lag (§14).
+  Decisão: **k6 em container** (`grafana/k6:1.0.0`), chamado por `bun run test:load` (`project/load-test/run.sh` roda o k6 na rede do Compose contra o nginx; detalhes em `project/docs/load-test.md`). Hoje só o cenário `health` roda: os de aposta (`distinct`, `hot`, `duplicate`) esperam os endpoints de `/wallets` e `/wagering/transactions`. Relatório com ambiente, metodologia, throughput, p50/p95/p99, taxa de erro, conflitos de concorrência e outbox lag (§14).
 
   Justificativa: o k6 é a ferramenta de mercado para isso, e rodar o gerador de carga isolado do sistema testado evita que ele dispute CPU com a api e distorça os números. A dependência extra (uma imagem) compensa a fidelidade do resultado.
 - [ ] **26. Ledger de partidas dobradas** (6.4)

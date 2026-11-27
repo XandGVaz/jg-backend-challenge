@@ -5,7 +5,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { z } from 'zod';
 import { HttpModule } from '../src/shared/http/http.module.js';
-import { AppError, ErrorKind } from '../src/shared/errors/index.js';
+import { AppError, ErrorKind, TransactionRejectedError } from '../src/shared/errors/index.js';
 
 const ProbeSchema = z.object({
   amount: z.string().regex(/^\d+\.\d{2}$/),
@@ -33,6 +33,14 @@ class ProbeController {
   @Get('conflict')
   conflict(): never {
     throw new ProbeConflictError();
+  }
+
+  @Get('rejected')
+  rejected(): never {
+    throw new TransactionRejectedError(
+      'INSUFFICIENT_FUNDS',
+      '0192f2a0-0000-7000-8000-000000000001',
+    );
   }
 
   @Get('crash')
@@ -84,6 +92,20 @@ describe('ErrorHandler (e2e)', () => {
 
     expect(response.status).toBe(409);
     expect(response.body.code).toBe('PROBE_CONFLICT');
+  });
+
+  it('answers a persisted business rejection with 422, the failureCode and the transactionId', async () => {
+    const response = await request(app.getHttpServer()).get('/probe/rejected');
+
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe('INSUFFICIENT_FUNDS');
+    expect(response.body.transactionId).toBe('0192f2a0-0000-7000-8000-000000000001');
+  });
+
+  it('omits transactionId for every other error', async () => {
+    const response = await request(app.getHttpServer()).get('/probe/conflict');
+
+    expect(response.body.transactionId).toBeUndefined();
   });
 
   it('hides the message of unexpected errors behind 500 INTERNAL_ERROR', async () => {

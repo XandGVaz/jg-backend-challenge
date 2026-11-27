@@ -15,6 +15,7 @@ const EnvSchema = z
     DATABASE_SSL_CA_FILE: z.string().min(1).optional(),
     DATABASE_POOL_MIN: z.coerce.number().int().min(0).default(0),
     DATABASE_POOL_MAX: z.coerce.number().int().min(1).default(10),
+    DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
     SWAGGER_ENABLED: z.stringbool().default(true),
     OTEL_ENABLED: z.stringbool().default(false),
     OTEL_SERVICE_NAME: z.string().min(1).default('wagering-api'),
@@ -25,9 +26,13 @@ const EnvSchema = z
     SQS_ENDPOINT: z.url().optional(),
     SQS_WAGER_TRANSACTIONS_QUEUE: z.string().endsWith('.fifo').default('wager-transactions.fifo'),
     SQS_WAGER_TRANSACTIONS_DLQ: z.string().endsWith('.fifo').default('wager-transactions-dlq.fifo'),
+    SQS_WALLET_EVENTS_QUEUE: z.string().endsWith('.fifo').default('wallet-events.fifo'),
     SQS_WAIT_TIME_SECONDS: z.coerce.number().int().min(0).max(20).default(20),
     SQS_MAX_MESSAGES: z.coerce.number().int().min(1).max(10).default(10),
     SQS_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(5),
+    PENDING_REFERENCE_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(10),
+    PENDING_REFERENCE_BACKOFF_BASE_SECONDS: z.coerce.number().int().min(1).default(2),
+    PENDING_REFERENCE_BACKOFF_MAX_SECONDS: z.coerce.number().int().min(1).default(300),
     WORKER_HEARTBEAT_FILE: z.string().min(1).default('/tmp/worker-heartbeat'),
     WORKER_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(10_000),
   })
@@ -52,6 +57,15 @@ const EnvSchema = z
         code: 'custom',
         path: ['DATABASE_POOL_MIN'],
         message: 'Must not exceed DATABASE_POOL_MAX',
+      });
+    }
+  })
+  .superRefine((env, ctx) => {
+    if (env.PENDING_REFERENCE_BACKOFF_BASE_SECONDS > env.PENDING_REFERENCE_BACKOFF_MAX_SECONDS) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PENDING_REFERENCE_BACKOFF_BASE_SECONDS'],
+        message: 'Must not exceed PENDING_REFERENCE_BACKOFF_MAX_SECONDS',
       });
     }
   })

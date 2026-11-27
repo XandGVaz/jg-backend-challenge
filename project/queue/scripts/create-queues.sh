@@ -5,6 +5,7 @@ set -eu
 : "${SQS_ENDPOINT:?SQS_ENDPOINT is required}"
 : "${SQS_WAGER_TRANSACTIONS_QUEUE:=wager-transactions.fifo}"
 : "${SQS_WAGER_TRANSACTIONS_DLQ:=wager-transactions-dlq.fifo}"
+: "${SQS_WALLET_EVENTS_QUEUE:=wallet-events.fifo}"
 : "${SQS_VISIBILITY_TIMEOUT_SECONDS:=30}"
 : "${SQS_REDRIVE_MAX_RECEIVE_COUNT:=10}"
 
@@ -36,4 +37,10 @@ queue_url=$(sqs create-queue \
   --attributes "{\"FifoQueue\":\"true\",\"ContentBasedDeduplication\":\"false\",\"VisibilityTimeout\":\"$SQS_VISIBILITY_TIMEOUT_SECONDS\",\"RedrivePolicy\":\"$redrive\"}" \
   --query QueueUrl --output text)
 
-echo "queue-init: ready queue=$queue_url dlq=$dlq_url maxReceiveCount=$SQS_REDRIVE_MAX_RECEIVE_COUNT"
+# Eventos da outbox: sem redrive (quem consome é externo); 14 dias cobrem um consumidor fora do ar.
+events_url=$(sqs create-queue \
+  --queue-name "$SQS_WALLET_EVENTS_QUEUE" \
+  --attributes FifoQueue=true,ContentBasedDeduplication=false,MessageRetentionPeriod=1209600 \
+  --query QueueUrl --output text)
+
+echo "queue-init: ready queue=$queue_url dlq=$dlq_url events=$events_url maxReceiveCount=$SQS_REDRIVE_MAX_RECEIVE_COUNT"

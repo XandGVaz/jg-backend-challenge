@@ -28,6 +28,7 @@ Validadas por Zod na inicialização (`api/src/config/env.ts`). Variável invál
 | `DATABASE_SSL_MODE` | `disable` | `require` cifra sem validar o certificado; `verify-full` valida cadeia e host |
 | `DATABASE_SSL_CA_FILE` | ausente | CA usada no `verify-full`; ausente = raízes públicas (basta para o RDS Proxy). A imagem traz o bundle do RDS em `/etc/ssl/certs/rds-global-bundle.pem` |
 | `DATABASE_POOL_MIN` / `DATABASE_POOL_MAX` | `0` / `10` | pool por réplica; a soma de api e workers precisa caber no `max_connections` do banco ou do proxy |
+| `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` | `30000` | `idle_in_transaction_session_timeout` de cada conexão do pg: encerra a sessão de um processo travado com a transação aberta (`ESCOLHAS.md` #13); `0` desliga |
 | `SWAGGER_ENABLED` | `true` | expõe `/docs` e `/docs-json` |
 | `OTEL_ENABLED` | `true` | exporta traces, métricas e logs |
 | `OTEL_SERVICE_NAME` | `wagering-api` | vira `job` no Prometheus e `service_name` no Loki |
@@ -37,6 +38,7 @@ Validadas por Zod na inicialização (`api/src/config/env.ts`). Variável invál
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `test` / `test` | só no emulador; lidas pela cadeia padrão do SDK, fora do schema Zod. Na AWS vêm da IAM role |
 | `SQS_ENDPOINT` | `http://queue:4566` | só no emulador ([queue](queue.md)); ausente = endpoint real da região |
 | `SQS_WAGER_TRANSACTIONS_QUEUE` / `SQS_WAGER_TRANSACTIONS_DLQ` | `wager-transactions.fifo` / `wager-transactions-dlq.fifo` | nomes das filas (precisam terminar em `.fifo`) |
+| `SQS_WALLET_EVENTS_QUEUE` | `wallet-events.fifo` | fila FIFO de destino dos eventos publicados pela outbox no worker (`ESCOLHAS.md` #28); precisa terminar em `.fifo` |
 
 As variáveis só do worker (`SQS_WAIT_TIME_SECONDS`, `SQS_MAX_MESSAGES`, `SQS_MAX_ATTEMPTS`, `WORKER_HEARTBEAT_*`) estão em [worker.md](worker.md).
 
@@ -58,27 +60,22 @@ Cada módulo Nest em `api/src/modules/` separa as camadas em pastas próprias. A
 
 ```
 src/modules/
-├── health/                     # GET /health/live, /health/ready
-│   ├── controllers/health.controller.ts
-│   ├── services/health.service.ts
-│   ├── health.schema.ts
-│   └── health.module.ts
-├── wallets/                    # /wallets, ledger, reconciliação
-│   ├── controllers/            # camada HTTP: valida, documenta, chama o service
-│   ├── services/               # casos de uso: dono da transação (em.transactional)
-│   ├── repositories/           # acesso a dados via MikroORM: consultas, lock, persist
-│   ├── domain/                 # Wallet, WalletLedgerEntry, erros e eventos
-│   ├── persistence/            # EntitySchema que mapeia o domínio para as tabelas
-│   └── wallets.module.ts
-└── wagering/                   # /wagering/transactions, /providers/..., consumer SQS, outbox
+├── auth/            # AuthGuard global (no-op) + ProviderIdentityPort (ESCOLHAS #3a)
+├── health/          # GET /health/live, /health/ready (sem repository)
+├── transactions/    # WagerTransaction: domínio (#13), eventos, EntitySchema e TransactionsService
+├── wallets/         # /wallets, ledger, reconciliação; Wallet, WalletLedgerEntry e WalletsService
+├── rounds/          # rodada com fechamento (#21) e RoundsService
+├── inbox/           # dedup do consumer SQS por (consumer_name, message_id)
+├── outbox/          # OutboxMessage, enqueue na transação e publishDue (SKIP LOCKED)
+└── wagering/        # /wagering/transactions, /providers/...: SubmitTransactionService
     ├── controllers/
-    ├── services/
-    ├── repositories/
-    ├── messaging/              # consumer SQS e schema da mensagem
-    ├── domain/
-    ├── persistence/
-    └── wagering.module.ts      # importa WalletsModule
+    ├── services/    # submit (idempotência, regras §7, saldo, eventos), resume, failExhausted
+    ├── messaging/   # schema da mensagem SQS, handler e consumer (só no worker)
+    └── wagering.module.ts
+src/worker/          # consumer, agendador de PENDING_REFERENCE e loop do publisher da outbox
 ```
+
+Dependências entre módulos, só de cima para baixo: `wagering` → `wallets`, `rounds`, `inbox`, `outbox`, `transactions`; `wallets` → `transactions`, `outbox`. O `transactions` existe à parte porque a abertura de wallet grava a transação `OPENING`, e o wagering depende das wallets.
 
 | Camada | Pasta | Faz | Não faz |
 | --- | --- | --- | --- |
@@ -86,7 +83,7 @@ src/modules/
 | Service | `services/` | abre a transação, orquestra repositories e domínio, lança `AppError` | conhecer HTTP, escrever SQL |
 | Repository | `repositories/` | consulta, lock, `persist`, traduz violação de constraint para `AppError` | `flush`, transação, regra de negócio, DDL |
 
-`wallets` e `wagering` já estão registrados no `AppModule`, ainda sem controllers nem providers. As pastas vazias têm `.gitkeep`. O schema das tabelas que eles vão mapear está em `database/migrations/V1__initial_schema.sql` ([flyway.md](database-init.md)).
+Cada módulo exporta os mapeamentos de `persistence/index.ts`, registrados em `src/database/entities.ts`. O schema vem das migrations de `database/migrations/` ([database-init](database-init.md)).
 
 ## 4. Telemetria
 
@@ -218,7 +215,7 @@ ReconciliationReport = {
 }
 ```
 
-- A moeda da wallet vem de `initialBalance.currency`. Saldo inicial `"0.00"` é válido e não gera `OPENING`.
+- A moeda da wallet vem de `initialBalance.currency`. Saldo inicial `"0.00"` é válido: grava a transação `OPENING` `PROCESSED`, sem lançamento, porque o ledger exige `amount > 0` (ESCOLHAS #21).
 - `limit` é o único campo numérico de entrada (`z.coerce`, por vir da query string).
 
 ### 9.2 Cursor do ledger (ESCOLHAS #18)
@@ -317,7 +314,7 @@ ErrorResponse = {
   details: { path: string, message: string }[],
   correlationId?: string,      // X-Request-Id do nginx, ou gerado pela api quando falta
   path: string, timestamp: string,
-  transactionId?: uuidv7,      // só em TransactionRejectedError (a implementar)
+  transactionId?: uuidv7,      // só em TransactionRejectedError
 }
 ```
 

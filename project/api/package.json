@@ -16,7 +16,8 @@
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "test": "bun test",
     "test:unit": "bun test src",
-    "test:e2e": "bun test test"
+    "test:e2e": "bun test test",
+    "test:load": "sh ../load-test/run.sh"
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.1178.0",
@@ -37,6 +38,7 @@
     "@opentelemetry/sdk-node": "^0.301.2",
     "@opentelemetry/sdk-trace": "3.1.1",
     "@opentelemetry/semantic-conventions": "^1.45.0",
+    "decimal.js": "^10.6.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "zod": "^4.6.7"

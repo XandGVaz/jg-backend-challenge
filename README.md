@@ -8,10 +8,11 @@ Stack: NestJS 12 + Bun, MikroORM 7, PostgreSQL 18 + Flyway, SQS (emulado pelo Mi
 
 ```
 .
+├── Makefile                 # atalhos para subir, testar e operar (`make` lista os comandos)
 ├── REQUISITOS.md            # enunciado do desafio
 ├── ESCOLHAS.md              # decisões em aberto e as escolhidas
 ├── ARCHITECTURE.md          # decisões, trade-offs e limitações
-├── system_architecture/     # documento de arquitetura (architecture.pdf)
+├── formal_documentation/    # documentação formal: UML, diagramas de sistema e de arquitetura (architecture.pdf)
 └── project/                 # código e infraestrutura
     ├── docker-compose.yml   # todos os serviços
     ├── .env.example         # variáveis (os defaults já funcionam)
@@ -39,13 +40,47 @@ Cada módulo segue as camadas controller → service → repository, com `domain
 
 ## Como rodar
 
+Pré-requisito: Docker com o plugin Compose. O `make` é opcional, e o Bun também: sem ele instalado, o Makefile roda os comandos da API num container `oven/bun`.
+
+### Opção 1: com o Makefile (na raiz do repositório)
+
 ```bash
-cd project
-cp .env.example .env    # opcional
-docker compose up -d --build --scale api=3 --scale worker=2 --wait
+make            # lista todos os comandos, agrupados, com exemplos
+make env        # opcional: cria project/.env a partir do .env.example
+make up         # constrói e sobe a stack (3 réplicas da api, 2 do worker) e espera ficar saudável
+make ps         # estado de cada container
+make logs SERVICE=worker
+make down       # para tudo (mantém os volumes); `make clean` também apaga os dados
 ```
 
-A API fica em http://localhost:8080 (Swagger em `/docs`) e o Grafana em http://localhost:3000. A lista completa de endereços, os comandos de desenvolvimento e os de migration estão em [project/PROJECT.md](project/PROJECT.md).
+O número de réplicas pode mudar: `make up API_REPLICAS=5 WORKER_REPLICAS=3`.
+
+### Opção 2: com o Docker Compose diretamente
+
+```bash
+cd project
+cp .env.example .env    # opcional: os defaults já funcionam
+docker compose up -d --build --scale api=3 --scale worker=2 --wait
+docker compose ps
+docker compose logs -f worker
+docker compose down     # `down -v` também apaga os volumes
+```
+
+Com a stack de pé, a API fica em http://localhost:8080 (Swagger em `/docs`) e o Grafana em http://localhost:3000 (admin/admin). A lista completa de endereços, os comandos de desenvolvimento e os de migration estão em [project/PROJECT.md](project/PROJECT.md).
+
+## Como testar
+
+| Comando `make` | Equivalente direto (em `project/api`) | O que roda | Precisa da stack? |
+| --- | --- | --- | --- |
+| `make test-unit` | `bun test src` | testes unitários | não |
+| `make test-e2e` | `SQS_ENDPOINT=http://localhost:4566 bun test test` | e2e contra o SQS do emulador (MiniStack) | sim |
+| `make test` | `bun test` | todos; sem a stack, os e2e de SQS são pulados | opcional |
+| `make typecheck` | `bun run typecheck` | checagem de tipos do TypeScript | não |
+| `make lint` | `bun run lint` | linter (oxlint) | não |
+| `make check` | os três acima | typecheck, lint e unitários, antes de um commit | não |
+| `make test-load` | `bun run test:load` | teste de carga com k6 em container ([docs/load-test.md](project/docs/load-test.md)) | sim |
+
+Sem o Makefile, rode `bun install` em `project/api` antes dos comandos da segunda coluna. O teste de carga aceita `RATE`, `DURATION`, `VUS` e `SCENARIOS`, por exemplo `make test-load RATE=100 DURATION=2m`.
 
 ## Documentação
 
@@ -54,7 +89,7 @@ A API fica em http://localhost:8080 (Swagger em `/docs`) e o Grafana em http://l
 - [REQUISITOS.md](REQUISITOS.md): enunciado, regras de negócio, contratos esperados e critérios de avaliação.
 - [ARCHITECTURE.md](ARCHITECTURE.md): decisões, trade-offs, estratégia transacional, concorrência, idempotência e limitações conhecidas.
 - [ESCOLHAS.md](ESCOLHAS.md): cada decisão do projeto (ORM, concorrência, idempotência, ledger, autenticação...) com as alternativas consideradas.
-- [system_architecture/architecture.pdf](system_architecture/architecture.pdf): arquitetura, fluxos e diagramas.
+- [formal_documentation/architecture.pdf](formal_documentation/architecture.pdf): documentação formal do sistema, com os diagramas UML (sequência do processamento de uma transação, máquina de estados de `WagerTransaction` e modelo de dados), o diagrama do sistema (contexto, componentes e topologia do Docker Compose) e os diagramas das arquiteturas adotadas: a de sistema (serviços, filas e fluxos entre eles) e a de código (camadas controller → service → repository e a direção das dependências).
 - [project/PROJECT.md](project/PROJECT.md): como subir, desenvolver e operar o ambiente.
 
 ### Por serviço
@@ -72,3 +107,4 @@ A API fica em http://localhost:8080 (Swagger em `/docs`) e o Grafana em http://l
 | `prometheus` | [project/docs/prometheus.md](project/docs/prometheus.md): catálogo de métricas |
 | `loki` | [project/docs/loki.md](project/docs/loki.md): campos e níveis de log |
 | `grafana` | [project/docs/grafana.md](project/docs/grafana.md): datasources e dashboards |
+| teste de carga | [project/docs/load-test.md](project/docs/load-test.md): k6 em container, cenários e relatório (`bun run test:load`) |

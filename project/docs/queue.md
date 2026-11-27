@@ -26,8 +26,11 @@ Container de execução única, como o [database-init](database-init.md): é o d
 | --- | --- |
 | `wager-transactions-dlq.fifo` | FIFO, retenção de 14 dias |
 | `wager-transactions.fifo` | FIFO, `ContentBasedDeduplication=false`, `VisibilityTimeout=30`, `RedrivePolicy` para a DLQ com `maxReceiveCount=10` |
+| `wallet-events.fifo` | FIFO, `ContentBasedDeduplication=false`, retenção de 14 dias, sem redrive; destino dos eventos da outbox (`ESCOLHAS.md` #28) |
 
 - O produtor precisa mandar `MessageGroupId` (a `walletId`) e `MessageDeduplicationId` (o `messageId` do envelope).
+- Na `wallet-events.fifo`, o publisher da outbox manda `MessageGroupId` (o `aggregateId`) e `MessageDeduplicationId` (o `eventId`), com dedup explícita porque o `ContentBasedDeduplication` fica desligado ([api](api.md), seção 13.1).
+- A `wallet-events.fifo` não tem redrive: quem consome é externo e deduplica por `eventId`; a retenção de 14 dias cobre um consumidor fora do ar quando o evento sai.
 - O redrive em 10 é rede de segurança; a aplicação manda para a DLQ antes, na 5ª entrega (`ESCOLHAS.md` #19).
 
 ## 3. Operação

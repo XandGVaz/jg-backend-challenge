@@ -63,6 +63,7 @@ bun run start:dev     # exige DATABASE_URL no ambiente
 bun run typecheck
 bun run lint
 bun test
+bun run test:load   # k6 em container; exige a stack de pé (docs/load-test.md)
 ```
 
 ## Migrations (Flyway)
@@ -92,6 +93,7 @@ Nova mudança de schema: `database/migrations/V<n>__<descricao>.sql` e a revers�
 | `prometheus` | [docs/prometheus.md](docs/prometheus.md) | métricas |
 | `loki` | [docs/loki.md](docs/loki.md) | logs |
 | `grafana` | [docs/grafana.md](docs/grafana.md) | dashboards e exploração |
+| teste de carga (fora do Compose) | [docs/load-test.md](docs/load-test.md) | k6 em container contra o nginx; `bun run test:load` |
 
 ### Enunciado e decisões
 
