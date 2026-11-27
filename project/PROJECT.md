@@ -66,6 +66,23 @@ bun test
 bun run test:load   # k6 em container; exige a stack de pé (docs/load-test.md)
 ```
 
+### Testes
+
+| Comando | O que roda | Precisa de |
+| --- | --- | --- |
+| `bun run test:unit` | unidade (`src/**/*.spec.ts`): Money, Wallet, regras de cada kind, idempotência | nada |
+| `bun run test:integration` | integração e concorrência da §13 (`test/integration/`) contra PostgreSQL e MiniStack reais | a stack de pé com 3 réplicas da api e 2 do worker, Docker CLI com Compose, e `E2E_BASE_URL` |
+| `SQS_ENDPOINT=http://localhost:4566 bun run test:e2e` | e2e do `ErrorHandler` e do `SqsPoller` | o MiniStack de pé |
+
+```bash
+docker compose up -d --build --scale api=3 --scale worker=2 --wait
+cd api && E2E_BASE_URL=http://localhost:8080 bun run test:integration
+```
+
+A suíte de integração cobre migrations e constraints, atomicidade entre wallet, ledger, inbox e outbox, inbox e reentrega, retry e DLQ e recuperação após reinício; a de concorrência, os oito cenários da §13: 50 envios paralelos da mesma aposta, o cenário da §8, wallets distintas em paralelo, ≥ 3 instâncias, worker morto entre o commit e o ack (`SIGKILL`), dois publishers sobre a mesma outbox, reversão antes da referência e reinício da api e do worker. Todo teste termina conferindo `saldo == saldo reconstruído pelo ledger`. Ela para e reinicia containers (`docker compose stop/kill/restart`), então não rode contra um ambiente compartilhado. Sem `E2E_BASE_URL`, é pulada. Outras variáveis: `E2E_DATABASE_URL` (default `postgres://wagering:wagering@localhost:5433/wagering`), `E2E_SQS_ENDPOINT` (default `http://localhost:4566`).
+
+Resultados da execução de referência, em tabelas: [docs/test-results.md](docs/test-results.md).
+
 ## Migrations (Flyway)
 
 ```bash
@@ -94,6 +111,7 @@ Nova mudança de schema: `database/migrations/V<n>__<descricao>.sql` e a revers�
 | `loki` | [docs/loki.md](docs/loki.md) | logs |
 | `grafana` | [docs/grafana.md](docs/grafana.md) | dashboards e exploração |
 | teste de carga (fora do Compose) | [docs/load-test.md](docs/load-test.md) | k6 em container contra o nginx; `bun run test:load` |
+| resultados dos testes | [docs/test-results.md](docs/test-results.md) | unidade, e2e, integração, concorrência e carga |
 
 ### Enunciado e decisões
 

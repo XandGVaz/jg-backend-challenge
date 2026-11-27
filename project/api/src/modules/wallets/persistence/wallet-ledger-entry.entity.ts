@@ -3,7 +3,7 @@ import { WalletLedgerEntry } from '../domain/wallet-ledger-entry.js';
 
 const decimal = { type: 'decimal', columnType: 'numeric(20,2)', runtimeType: 'string' } as const;
 
-/** Mapeamento de `wallet_ledger_entries` (V1 + `wallet_version` da V2); o banco só aceita INSERT. */
+/** Mapeamento de `wallet_ledger_entries` (V1); o banco só aceita INSERT. */
 export const WalletLedgerEntryEntity = new EntitySchema<WalletLedgerEntry>({
   // O MikroORM hidrata a entidade sem tornar público o construtor do domínio.
   class: WalletLedgerEntry as unknown as EntityCtor<WalletLedgerEntry>,

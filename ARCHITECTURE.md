@@ -115,7 +115,7 @@ A unidade de concorrência é a `walletId` (§8).
 
 - A gravação do saldo é condicionada (`UPDATE … WHERE version = :lida`). Em conflito, o `runTransaction` refaz a transação inteira, relendo o saldo, até `OPTIMISTIC_LOCK_MAX_ATTEMPTS` vezes (5 por padrão). Esgotado, `503 CONCURRENCY_CONFLICT`.
 - No cenário obrigatório (100,00 e duas apostas de 80,00), a segunda aposta relê saldo 20,00 na nova tentativa e termina `REJECTED` com `INSUFFICIENT_FUNDS`: um débito, saldo final 20,00.
-- O banco barra o erro mesmo com defeito na aplicação: `CHECK (balance_amount >= 0)`, aritmética do lançamento em `CHECK` e `UNIQUE (wallet_id, transaction_id)` no ledger. A V2 decidida no #12 acrescenta `wallet_version` a cada lançamento, com `UNIQUE (wallet_id, wallet_version)`.
+- O banco barra o erro mesmo com defeito na aplicação: `CHECK (balance_amount >= 0)`, aritmética do lançamento em `CHECK` e `UNIQUE (wallet_id, transaction_id)` no ledger. Cada lançamento também guarda a `wallet_version`, com `UNIQUE (wallet_id, wallet_version)` (#12).
 - `MessageGroupId = walletId` reduz conflitos na fila, mas é otimização.
 
 ## 5. Idempotência
@@ -165,4 +165,4 @@ Todos os itens do [ESCOLHAS.md](ESCOLHAS.md) estão decididos, inclusive a bibli
 
 Todos os módulos da API estão implementados e foram exercitados contra a stack (3 réplicas da api, 2 do worker): o cenário obrigatório da §8 (duas apostas de 80,00 sobre 100,00) termina com uma `PROCESSED`, uma `REJECTED` e saldo 20,00; a mesma aposta enviada 50 vezes em paralelo gera um único débito; o teste de carga ([load-test.md](project/docs/load-test.md)) roda todos os cenários.
 
-Falta a suíte automatizada da §13 (integração e concorrência com PostgreSQL e MiniStack reais em `test/`): hoje esses cenários foram verificados por roteiros manuais contra a stack, e os testes automatizados são de unidade.
+A suíte automatizada da §13 está em `project/api/test/integration/`: 11 testes de integração e os 8 cenários de concorrência, contra PostgreSQL e MiniStack reais, todos terminando com `saldo == saldo reconstruído pelo ledger`. Resultados em tabelas: [project/docs/test-results.md](project/docs/test-results.md).

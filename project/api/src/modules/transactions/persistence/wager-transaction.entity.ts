@@ -6,7 +6,7 @@ const decimal = { type: 'decimal', columnType: 'numeric(20,2)', runtimeType: 'st
 const currency = { type: 'string', columnType: 'char(3)', length: 3 } as const;
 
 /**
- * Mapeamento de `wager_transactions` (V1 + `reference_kind` da V2); schema, constraints e guard
+ * Mapeamento de `wager_transactions` (V1); schema, constraints e guard
  * pertencem às migrations Flyway. Valores monetários trafegam como string decimal, nunca number.
  */
 export const WagerTransactionEntity = new EntitySchema<WagerTransaction>({

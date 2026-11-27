@@ -49,7 +49,7 @@ const OWN_DIRECTION: Partial<ByKind<LedgerDirection>> = {
   [WagerTransactionKind.Refund]: LedgerDirection.Credit,
 };
 
-/** Transação referenciada, como gravada no par `reference_transaction_id` + `reference_kind` (V2). */
+/** Transação referenciada, como gravada no par `reference_transaction_id` + `reference_kind`. */
 export interface WagerTransactionReference {
   readonly id: string;
   readonly kind: WagerTransactionKind;
@@ -413,7 +413,7 @@ export class WagerTransaction {
     }
   }
 
-  // O CHECK de referência e a FK composta da V2 exigem o par coerente com o kind.
+  // O CHECK de referência e a FK composta exigem o par coerente com o kind.
   private assertLinkableReference(reference: WagerTransactionReference | undefined): void {
     if (reference === undefined && this.requiresReference()) {
       throw new InvalidTransactionStateError(this.id, this._status, 'markProcessed unlinked');

@@ -7,7 +7,7 @@ import {
 const UNIQUE_VIOLATION = '23505';
 const CONSTRAINT_IN_MESSAGE = /constraint "([a-z0-9_]+)"/;
 
-/** Constraints de `wager_transactions` (V1 e V2) com erro de aplicação próprio. */
+/** Constraints de `wager_transactions` (V1) com erro de aplicação próprio. */
 const TRANSLATIONS: Readonly<Record<string, (cause: unknown) => AppError>> = {
   uq_wager_transactions_idempotency: (cause) =>
     new DuplicateTransactionError('idempotency_key', { cause }),

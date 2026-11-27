@@ -1,6 +1,6 @@
--- Schema inicial: wallets, transações de aposta, ledger, inbox e outbox.
+-- Schema completo: wallets, transações de aposta, rodadas, ledger, inbox e outbox.
 -- Garantias de unicidade, imutabilidade e não-negatividade ficam aqui (REQUISITOS §5.9).
--- Triggers de imutabilidade: R__ledger_entries_immutable.sql e R__wager_transactions_guard.sql.
+-- Triggers: R__ledger_entries_immutable.sql, R__wager_transactions_guard.sql e R__rounds_guard.sql.
 
 CREATE TABLE wallets (
     id              uuid            NOT NULL,
@@ -34,6 +34,8 @@ CREATE TABLE wager_transactions (
     currency                            char(3)         NOT NULL,
     reference_external_transaction_id   varchar(128),
     reference_transaction_id            uuid,
+    -- Kind da referência, gravado junto com reference_transaction_id: sustenta um estorno por BET (ESCOLHAS #21).
+    reference_kind                      varchar(16),
     status                              varchar(20)     NOT NULL,
     failure_code                        varchar(64),
     -- Saldo observado ao processar/rejeitar: o replay devolve este valor (REQUISITOS §7.7).
@@ -48,8 +50,12 @@ CREATE TABLE wager_transactions (
     CONSTRAINT uq_wager_transactions_idempotency    UNIQUE (idempotency_key),
     CONSTRAINT uq_wager_transactions_external       UNIQUE (provider_id, external_transaction_id),
     CONSTRAINT uq_wager_transactions_id_wallet      UNIQUE (id, wallet_id),
+    CONSTRAINT uq_wager_transactions_id_kind        UNIQUE (id, kind),
     CONSTRAINT fk_wager_transactions_wallet         FOREIGN KEY (wallet_id) REFERENCES wallets (id),
     CONSTRAINT fk_wager_transactions_reference      FOREIGN KEY (reference_transaction_id) REFERENCES wager_transactions (id),
+    -- A FK composta obriga reference_kind a ser o kind real da transação referenciada.
+    CONSTRAINT fk_wager_transactions_reference_kind FOREIGN KEY (reference_transaction_id, reference_kind) REFERENCES wager_transactions (id, kind),
+    CONSTRAINT ck_wager_transactions_reference_kind CHECK ((reference_transaction_id IS NULL) = (reference_kind IS NULL)),
     CONSTRAINT ck_wager_transactions_kind           CHECK (kind IN ('OPENING', 'BET', 'WIN', 'LOSS', 'REFUND', 'ROLLBACK')),
     CONSTRAINT ck_wager_transactions_status         CHECK (status IN ('PENDING', 'PENDING_REFERENCE', 'PROCESSED', 'REJECTED', 'FAILED')),
     CONSTRAINT ck_wager_transactions_amount         CHECK (amount >= 0),
@@ -79,6 +85,11 @@ CREATE UNIQUE INDEX uq_wager_transactions_reversal_once
     ON wager_transactions (reference_transaction_id, kind)
     WHERE kind IN ('REFUND', 'ROLLBACK') AND status = 'PROCESSED';
 
+-- Uma BET só é estornada uma vez, por REFUND ou por ROLLBACK (ESCOLHAS #21).
+CREATE UNIQUE INDEX uq_wager_transactions_bet_reversal_once
+    ON wager_transactions (reference_transaction_id)
+    WHERE kind IN ('REFUND', 'ROLLBACK') AND status = 'PROCESSED' AND reference_kind = 'BET';
+
 -- Resolução da referência por (provider, id externo) e worker de PENDING_REFERENCE.
 CREATE INDEX ix_wager_transactions_reference_lookup
     ON wager_transactions (provider_id, reference_external_transaction_id)
@@ -99,10 +110,14 @@ CREATE TABLE wallet_ledger_entries (
     currency                char(3)         NOT NULL,
     balance_before_amount   numeric(20, 2)  NOT NULL,
     balance_after_amount    numeric(20, 2)  NOT NULL,
+    -- Versão da wallet depois deste lançamento: dois lançamentos nunca saem da mesma versão (ESCOLHAS #12).
+    wallet_version          integer         NOT NULL,
     created_at              timestamptz(3)  NOT NULL,
     CONSTRAINT pk_wallet_ledger_entries                 PRIMARY KEY (id),
     -- No máximo um lançamento por wallet em cada transação (REQUISITOS §6.4).
     CONSTRAINT uq_wallet_ledger_entries_transaction     UNIQUE (wallet_id, transaction_id),
+    CONSTRAINT uq_wallet_ledger_entries_wallet_version  UNIQUE (wallet_id, wallet_version),
+    CONSTRAINT ck_wallet_ledger_entries_wallet_version  CHECK (wallet_version >= 1),
     -- A moeda do lançamento é a da wallet; a transação pertence à mesma wallet.
     CONSTRAINT fk_wallet_ledger_entries_wallet          FOREIGN KEY (wallet_id, currency) REFERENCES wallets (id, currency),
     CONSTRAINT fk_wallet_ledger_entries_transaction     FOREIGN KEY (transaction_id, wallet_id) REFERENCES wager_transactions (id, wallet_id),
@@ -138,13 +153,31 @@ CREATE TABLE outbox_messages (
     attempts        integer         NOT NULL DEFAULT 0,
     next_attempt_at timestamptz(3),
     published_at    timestamptz(3),
+    -- Contexto W3C do request de origem, para o publisher ligar o span PRODUCER (jaeger.md §6).
+    trace_context   jsonb,
     CONSTRAINT pk_outbox_messages           PRIMARY KEY (id),
     CONSTRAINT ck_outbox_messages_version   CHECK (event_version >= 1),
     CONSTRAINT ck_outbox_messages_attempts  CHECK (attempts >= 0),
-    CONSTRAINT ck_outbox_messages_payload   CHECK (jsonb_typeof(payload) = 'object')
+    CONSTRAINT ck_outbox_messages_payload   CHECK (jsonb_typeof(payload) = 'object'),
+    CONSTRAINT ck_outbox_messages_trace_context CHECK (trace_context IS NULL OR jsonb_typeof(trace_context) = 'object')
 );
 
 -- Publishers concorrentes buscam pendentes com FOR UPDATE SKIP LOCKED nesta ordem.
 CREATE INDEX ix_outbox_messages_pending
     ON outbox_messages (next_attempt_at, occurred_at)
     WHERE published_at IS NULL;
+
+-- Rodadas: uma por provedor, abertas ou fechadas; o primeiro WIN ou LOSS fecha (ESCOLHAS #21).
+-- Sem FK de wager_transactions: OPENING não tem rodada real; imutabilidade fica em R__rounds_guard.sql.
+CREATE TABLE rounds (
+    provider_id   varchar(64)     NOT NULL,
+    round_id      varchar(128)    NOT NULL,
+    status        varchar(10)     NOT NULL,
+    opened_at     timestamptz(3)  NOT NULL,
+    closed_at     timestamptz(3),
+    CONSTRAINT pk_rounds            PRIMARY KEY (provider_id, round_id),
+    CONSTRAINT ck_rounds_status     CHECK (status IN ('OPEN', 'CLOSED')),
+    -- Fechada tem closed_at; aberta não tem.
+    CONSTRAINT ck_rounds_closed     CHECK ((status = 'CLOSED') = (closed_at IS NOT NULL)),
+    CONSTRAINT ck_rounds_timestamps CHECK (closed_at IS NULL OR closed_at >= opened_at)
+);

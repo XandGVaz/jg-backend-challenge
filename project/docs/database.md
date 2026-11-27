@@ -25,13 +25,14 @@ Dentro da rede do Compose a URL é `postgres://wagering:wagering@database:5432/w
 
 O schema não é criado pelo container nem pelo ORM: ele vem das migrations SQL de `database/migrations/`, aplicadas pelo serviço [`database-init`](database-init.md). Toda mudança de schema é uma migration nova `V<n>__` com a reversão `database/undo/U<n>__`.
 
-A `V2` (`V2__add_ledger_wallet_version_and_rounds.sql`, com a `U2` de mesma descrição) já está escrita e acrescenta:
+Todo o schema está numa migration só, a `V1__initial_schema.sql` (com a `U1`), porque o projeto ainda não foi para produção: as versões intermediárias foram consolidadas. Além das tabelas de wallets, transações, ledger, inbox e outbox, ela traz:
 
-- `wallet_ledger_entries.wallet_version integer NOT NULL`, com `uq_wallet_ledger_entries_wallet_version (wallet_id, wallet_version)` e `ck_wallet_ledger_entries_wallet_version`: dois lançamentos nunca saem da mesma versão da wallet e a sequência por wallet não tem buracos (`ESCOLHAS.md` #12). A coluna nasce nullable, recebe backfill e só então fica `NOT NULL`.
-- tabela `rounds`, única por `(provider_id, round_id)`, com `status` `OPEN`/`CLOSED` e `closed_at` obrigatório quando fechada; `R__rounds_guard.sql` proíbe reabrir rodada fechada, alterar identidade/`opened_at` e apagar. O primeiro `WIN`/`LOSS` fecha a rodada; `BET` depois disso é rejeitada pela aplicação com `ROUND_CLOSED` (`ESCOLHAS.md` #21).
-- `wager_transactions.reference_kind`, `uq_wager_transactions_id_kind (id, kind)`, FK composta `fk_wager_transactions_reference_kind` e índice parcial `uq_wager_transactions_bet_reversal_once`: uma `BET` só é estornada uma vez, por `REFUND` ou por `ROLLBACK` (`ESCOLHAS.md` #21). O índice `uq_wager_transactions_reversal_once` segue valendo, por tipo, para os demais kinds.
+- `wallet_ledger_entries.wallet_version`, com `uq_wallet_ledger_entries_wallet_version (wallet_id, wallet_version)`: dois lançamentos nunca saem da mesma versão da wallet (`ESCOLHAS.md` #12).
+- tabela `rounds`, única por `(provider_id, round_id)`, com `status` `OPEN`/`CLOSED`; `R__rounds_guard.sql` proíbe reabrir, alterar identidade/`opened_at` e apagar. O primeiro `WIN`/`LOSS` fecha a rodada; `BET` depois disso é rejeitada pela aplicação com `ROUND_CLOSED` (`ESCOLHAS.md` #21).
+- `wager_transactions.reference_kind`, `uq_wager_transactions_id_kind (id, kind)`, FK composta `fk_wager_transactions_reference_kind` e índice parcial `uq_wager_transactions_bet_reversal_once`: uma `BET` só é estornada uma vez, por `REFUND` ou por `ROLLBACK` (`ESCOLHAS.md` #21).
+- `outbox_messages.trace_context jsonb`: o contexto W3C gravado com o evento, para o publisher ligar o span PRODUCER ao request de origem ([jaeger.md](jaeger.md) §6).
 
-A `V3` (`V3__add_outbox_trace_context.sql`, com a `U3`) acrescenta `outbox_messages.trace_context jsonb`, o contexto W3C gravado com o evento para o publisher ligar o span PRODUCER ao request de origem ([jaeger.md](jaeger.md) §6).
+Depois que o projeto for para produção, toda mudança volta a ser uma migration nova `V<n>__`, nunca uma edição da `V1`.
 
 `idle_in_transaction_session_timeout` é definido na conexão do MikroORM, para que um processo travado com a transação aberta não segure bloqueios (`ESCOLHAS.md` #13).
 

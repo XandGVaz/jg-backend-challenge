@@ -17,6 +17,7 @@
     "test": "bun test",
     "test:unit": "bun test src",
     "test:e2e": "bun test test",
+    "test:integration": "bun test --timeout 240000 test/integration",
     "test:load": "sh ../load-test/run.sh"
   },
   "dependencies": {

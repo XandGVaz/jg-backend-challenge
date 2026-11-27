@@ -71,7 +71,7 @@ Justificativa:
 - **Conflito é raro no caminho normal:** `MessageGroupId = walletId` já serializa a maior parte do tráfego da fila por wallet. O que sobra (HTTP concorrente, réplicas) é coberto pelo retry.
 - **Observável:** `wagering.lock.conflicts{use_case}` e `wagering.retries{operation="optimistic_lock"}`, e um span `db.transaction` por tentativa.
 - **Por que não pessimista:** `SELECT … FOR UPDATE` seguraria o lock da wallet durante toda a transação, inclusive leituras, e serializaria também o caso sem disputa. Um modo híbrido para wallet muito disputada fica para o teste de carga (#25) avaliar.
-- **Defesa em profundidade:** `CHECK (balance_amount >= 0)`, aritmética do lançamento verificada no banco e `UNIQUE (wallet_id, transaction_id)` no ledger barram o erro mesmo com defeito na aplicação. A V2 decidida no #12 acrescenta `UNIQUE (wallet_id, wallet_version)`.
+- **Defesa em profundidade:** `CHECK (balance_amount >= 0)`, aritmética do lançamento verificada no banco e `UNIQUE (wallet_id, transaction_id)` no ledger barram o erro mesmo com defeito na aplicação. A `V1` também tem `UNIQUE (wallet_id, wallet_version)` (#12).
 
 ### 5. Uso do `version` da Wallet
 Seção 6.2 · Justificar se não for optimistic locking
@@ -160,7 +160,7 @@ O enunciado deixa a escolha com você, mas não lista opções. Marque quando es
   Justificativa:
   - **A invariante fica dentro do aggregate:** não existe saldo alterado sem lançamento, porque o mesmo método produz os dois (§6.2: "toda alteração de saldo tem um lançamento correspondente").
   - **Erro de domínio para saldo insuficiente:** a `Wallet` não conhece o tipo da operação; o service decide se é `INSUFFICIENT_FUNDS` (aposta) ou `REVERSAL_INSUFFICIENT_FUNDS` (estorno) e grava a rejeição antes de responder.
-  - **`wallet_version` no ledger (V2):** cada lançamento grava o `version` resultante da wallet, com `UNIQUE (wallet_id, wallet_version)`. O banco recusa dois lançamentos gerados a partir da mesma versão (proteção contra lost update mesmo com defeito na aplicação), e o ledger ganha uma sequência sem buracos por wallet. Como o `version` só muda quando o saldo muda, `lançamentos = version - 1`, mais o de abertura quando houver saldo inicial. Implementado na `V2__add_ledger_wallet_version_and_rounds.sql`, com backfill que começa em 2 nas wallets abertas sem saldo.
+  - **`wallet_version` no ledger:** cada lançamento grava o `version` resultante da wallet, com `UNIQUE (wallet_id, wallet_version)`. O banco recusa dois lançamentos gerados a partir da mesma versão (proteção contra lost update mesmo com defeito na aplicação), e o ledger ganha uma sequência sem buracos por wallet. Como o `version` só muda quando o saldo muda, `lançamentos = version - 1`, mais o de abertura quando houver saldo inicial. Está na `V1`: a sequência começa em 1 quando há saldo inicial (lançamento de `OPENING`) e em 2 quando não há.
 - [x] **13. Transições válidas de `WagerTransaction`** (6.3): definidas e documentadas; estados terminais não transicionam.
 
   Decisão:
@@ -287,10 +287,10 @@ O enunciado deixa a escolha com você, mas não lista opções. Marque quando es
   | `ROLLBACK` de um `REFUND` | permitido (regra 3): debita o reembolso e a `BET` volta a valer, mas **não aceita novo `REFUND`** | a regra 4 proíbe reverter a mesma referência duas vezes pelo mesmo tipo |
   | `REFUND` e `ROLLBACK` da mesma `BET` | **uma `BET` é estornada uma vez só, por qualquer tipo**: o segundo é `REJECTED` com `REFERENCE_ALREADY_REVERSED` | os dois creditariam a aposta, e crédito duplicado é falha eliminatória (§14) |
   | `BET` que chega depois de um `REFUND` rejeitado que a citava | `REJECTED` com `BET_ALREADY_CANCELLED` | o provedor já tinha cancelado a aposta (caso típico de timeout); processá-la debitaria o jogador por uma aposta cancelada |
-  | Rodada | **entidade com fechamento** (tabela `rounds`, única por `provider_id` + `round_id`, numa V2): o primeiro `WIN` ou `LOSS` fecha a rodada; depois disso, `BET` na rodada é `REJECTED` com `ROUND_CLOSED`, e `WIN`, `REFUND` e `ROLLBACK` continuam aceitos | torna explícita uma regra de jogo que, sem a entidade, o sistema não enxergaria; prêmios múltiplos e correções continuam possíveis |
+  | Rodada | **entidade com fechamento** (tabela `rounds`, única por `provider_id` + `round_id`): o primeiro `WIN` ou `LOSS` fecha a rodada; depois disso, `BET` na rodada é `REJECTED` com `ROUND_CLOSED`, e `WIN`, `REFUND` e `ROLLBACK` continuam aceitos | torna explícita uma regra de jogo que, sem a entidade, o sistema não enxergaria; prêmios múltiplos e correções continuam possíveis |
   | `OPENING` com saldo inicial `0.00` | grava a transação `OPENING` `PROCESSED`, **sem lançamento** (o ledger exige `amount > 0` e o saldo não muda) | comprova a abertura da wallet no histórico sem violar a invariante "toda alteração de saldo tem lançamento" |
 
-  No schema (`V2`): a tabela `rounds` com o guard `R__rounds_guard.sql` e a regra "uma reversão por `BET`" (`reference_kind` + `uq_wager_transactions_bet_reversal_once`). No código: `ROUND_CLOSED` e `BET_ALREADY_CANCELLED` no enum `FailureCode`. Falta a lógica que os aplica, que depende do caso de uso de submit.
+  No schema (`V1`): a tabela `rounds` com o guard `R__rounds_guard.sql` e a regra "uma reversão por `BET`" (`reference_kind` + `uq_wager_transactions_bet_reversal_once`). No código: `ROUND_CLOSED` e `BET_ALREADY_CANCELLED` no enum `FailureCode`. Falta a lógica que os aplica, que depende do caso de uso de submit.
 - [x] **22. Nomes e assinaturas do modelo de domínio** (6): podem ser adaptados se as garantias forem preservadas.
 
   Decisão: **manter os nomes e assinaturas do enunciado** (`Money.from`, `Wallet.open`, `rehydrate`, `markPendingReference`, `scheduleRetry`…). As únicas assinaturas que o enunciado deixa livres são as de `debit`/`credit` (#12).

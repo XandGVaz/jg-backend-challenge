@@ -34,7 +34,7 @@ export class WalletLedgerEntry {
   readonly walletId: string;
   readonly transactionId: string;
   readonly direction: LedgerDirection;
-  /** Versão da wallet depois deste lançamento (V2, ESCOLHAS #12). */
+  /** Versão da wallet depois deste lançamento (ESCOLHAS #12). */
   readonly walletVersion: number;
   readonly createdAt: Date;
   private readonly amount: string;
