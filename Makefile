@@ -19,10 +19,13 @@ BUN_IMAGE       ?= oven/bun:1-alpine
 ifneq ($(shell command -v bun 2>/dev/null),)
   BUN         := cd $(API_DIR) && bun
   BUN_E2E     := cd $(API_DIR) && SQS_ENDPOINT=http://localhost:$(SQS_PORT) bun
+  BUN_INT     := cd $(API_DIR) && E2E_BASE_URL=http://localhost:8080 bun
 else
   BUN_DOCKER  := docker run --rm -t -u $(shell id -u):$(shell id -g) -e HOME=/tmp -v $(API_DIR):/app -w /app
   BUN         := $(BUN_DOCKER) $(BUN_IMAGE) bun
   BUN_E2E     := $(BUN_DOCKER) --network $(NETWORK) -e SQS_ENDPOINT=http://queue:4566 $(BUN_IMAGE) bun
+  # A suíte de integração para e reinicia containers: precisa do socket do Docker e do projeto no mesmo caminho.
+  BUN_INT     := docker run --rm -t --network host -v /var/run/docker.sock:/var/run/docker.sock -v $(CURDIR):$(CURDIR) -w $(API_DIR) -e HOME=/tmp -e E2E_BASE_URL=http://localhost:8080 $(BUN_IMAGE) sh -c 'apk add --no-cache docker-cli docker-cli-compose >/dev/null && bun "$$@"' bun
 endif
 
 ##@ Ajuda
@@ -68,7 +71,7 @@ urls: ## Mostra os endereços da API e da observabilidade
 
 ##@ Testes e qualidade
 
-.PHONY: install test test-unit test-e2e test-load typecheck lint check
+.PHONY: install test test-unit test-e2e test-integration test-load typecheck lint check
 install: ## Instala as dependências da API (project/api/node_modules)
 	$(BUN) install --frozen-lockfile
 
@@ -84,6 +87,9 @@ test-unit: install ## Roda só os testes unitários (não precisa da stack)
 
 test-e2e: install ## Roda os testes e2e contra o SQS do emulador (exige `make up`)
 	$(BUN_E2E) test test
+
+test-integration: install ## Integração e concorrência da §13 contra a stack real (exige `make up`; para e reinicia containers)
+	$(BUN_INT) test --timeout 240000 test/integration
 
 test-load: ## Teste de carga com k6 em container (exige `make up`; RATE, DURATION, SCENARIOS)
 	sh $(PROJECT_DIR)/load-test/run.sh

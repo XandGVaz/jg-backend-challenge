@@ -53,7 +53,7 @@ Só conjuntos **fechados e pequenos** de valores. Proibidos: `walletId`, `transa
 | `outcome` | `wagering.outcome` | `wagering_outcome` | definidos por métrica |
 | `reason` | `wagering.reason` | `wagering_reason` | definidos por métrica |
 | `operation` | `wagering.operation` | `wagering_operation` | `optimistic_lock`, `sqs_message`, `outbox_publish`, `pending_reference` |
-| `use_case` | `wagering.use_case` | `wagering_use_case` | `submit_transaction`, `open_wallet`, `reprocess_pending` |
+| `use_case` | `wagering.use_case` | `wagering_use_case` | `submit_transaction`, `open_wallet`, `reprocess_pending`, `publish_outbox` |
 | `consumer` | `wagering.consumer` | `wagering_consumer` | nome do consumer da inbox |
 | `queue` | `messaging.destination.name` | `messaging_destination_name` | nome da fila |
 | `event_type` | `wagering.event.type` | `wagering_event_type` | `eventType` dos eventos |

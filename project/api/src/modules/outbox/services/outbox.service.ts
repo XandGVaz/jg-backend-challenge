@@ -53,8 +53,7 @@ interface BatchResult {
   items: PublishResult[];
 }
 
-// TODO(integrador): incluir 'publish_outbox' em TransactionUseCase e em docs/prometheus.md §5.
-const PUBLISH_USE_CASE = 'publish_outbox' as TransactionUseCase;
+const PUBLISH_USE_CASE: TransactionUseCase = 'publish_outbox';
 
 const tracer = trace.getTracer('wagering-api.outbox');
 

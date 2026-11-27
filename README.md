@@ -78,9 +78,10 @@ Com a stack de pé, a API fica em http://localhost:8080 (Swagger em `/docs`) e o
 | `make typecheck` | `bun run typecheck` | checagem de tipos do TypeScript | não |
 | `make lint` | `bun run lint` | linter (oxlint) | não |
 | `make check` | os três acima | typecheck, lint e unitários, antes de um commit | não |
+| `make test-integration` | `E2E_BASE_URL=http://localhost:8080 bun run test:integration` | integração e concorrência da §13 contra PostgreSQL e MiniStack reais; para e reinicia containers | sim |
 | `make test-load` | `bun run test:load` | teste de carga com k6 em container ([docs/load-test.md](project/docs/load-test.md)) | sim |
 
-Sem o Makefile, rode `bun install` em `project/api` antes dos comandos da segunda coluna. O teste de carga aceita `RATE`, `DURATION`, `VUS` e `SCENARIOS`, por exemplo `make test-load RATE=100 DURATION=2m`.
+Sem o Makefile, rode `bun install` em `project/api` antes dos comandos da segunda coluna. Os resultados da execução de referência estão em [project/docs/test-results.md](project/docs/test-results.md). O teste de carga aceita `RATE`, `DURATION`, `VUS` e `SCENARIOS`, por exemplo `make test-load RATE=100 DURATION=2m`.
 
 ## Documentação
 

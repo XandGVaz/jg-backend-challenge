@@ -1,7 +1,8 @@
 import { metrics, type Counter } from '@opentelemetry/api';
 
 /** Valores de `wagering.use_case` (docs/prometheus.md §5). */
-export type TransactionUseCase = 'submit_transaction' | 'open_wallet' | 'reprocess_pending';
+export type TransactionUseCase =
+  'submit_transaction' | 'open_wallet' | 'reprocess_pending' | 'publish_outbox';
 
 let lockConflicts: Counter | undefined;
 let retries: Counter | undefined;

@@ -27,7 +27,7 @@ Justificativa:
 - **Mesmo emulador no Compose e nos testes (#11):** os testes de integração rodam contra o mesmo serviço que o ambiente local usa (`project/docs/queue.md`).
 - **Cobre o que o desafio usa:** filas FIFO, `MessageGroupId`, `MessageDeduplicationId`, `ChangeMessageVisibility` e `RedrivePolicy` para a DLQ. O `sqs-poller.e2e.spec.ts` exercita esse caminho contra o MiniStack.
 - **Imagem fixada** (`ministackorg/ministack:1.5.44`), com healthcheck próprio (`/_ministack/health`). As filas são criadas pelo `queue-init`, o dono único delas.
-- <!-- revisar: motivo da escolha frente ao LocalStack (tamanho da imagem, tempo de subida, licença?) -->
+- **Mais leve e open source:** imagem e consumo de memória menores que os do LocalStack, o que pesa numa stack que já sobe 3 réplicas da api, 2 do worker e a observabilidade; e o código é aberto, sem conta ou token para usar.
 
 ### 3. Autenticação
 Seção 2 · Justificar no ARCHITECTURE.md. Se não implementar, descrever o desenho que adotaria

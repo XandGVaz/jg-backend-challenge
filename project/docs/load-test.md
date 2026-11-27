@@ -71,4 +71,15 @@ O valor de `wagering_outbox_lag_seconds` no relatório pode vir de uma série an
 
 ## 6. Análise
 
-O `report.md` termina com uma seção "Análise" para preencher à mão: o que limitou o throughput, como os conflitos cresceram no `hot`, e o que os números não mostram (por exemplo, a latência de banco sem span próprio). A §14 pede honestidade na análise, não uma meta de RPS.
+Leitura da rodada de referência da §5. O `report.md` de cada execução traz o mesmo espaço para a análise daquela rodada.
+
+- **Throughput:** 122 req/s é a taxa oferecida, não a capacidade. Três cenários a 40 iterações/s por 20 s, mais as 40 requisições do `duplicate` e o setup, dão as 2454 requisições, e o sistema acompanhou sem fila. O teste não buscou o ponto de saturação, então a capacidade máxima não foi medida.
+- **Latência:** p50 de 11 ms e p95 de 17,7 ms. O p99 de 64,8 ms, quase 4 vezes o p95, é compatível com as novas tentativas do bloqueio otimista no `hot`. Essa relação é provável, mas não foi comprovada: o relatório não separa a latência por cenário.
+- **Wallet muito disputada:** 15 conflitos de lock em cerca de 800 apostas na mesma wallet (~2%), todos absorvidos pela nova tentativa, com 0 respostas `503`. Numa rodada anterior com mais disputa, 19 requisições esgotaram as 5 tentativas. Esse é o limite do bloqueio otimista sem espera entre tentativas, e é por isso que o modo híbrido continua em aberto (`ARCHITECTURE.md` §9).
+- **Idempotência sob carga:** 40 envios simultâneos da mesma aposta resultaram em 1 débito e 39 replays, sem `409` nem `5xx`.
+- **Outbox:** o máximo de pendentes foi 90, e a fila voltou a zero ao fim do teste. O lag de 642 s do relatório vem de uma série antiga do Prometheus (§5) e não mede esta rodada. O atraso real desta rodada (`published_at - occurred_at`) não foi registrado.
+- **O que os números não mostram:**
+  - a latência de cada query, porque não há span de banco por query (`ARCHITECTURE.md` §8);
+  - o efeito de dividir a máquina: gerador, 3 réplicas da api, 2 do worker, banco e observabilidade rodam nos mesmos 8 CPUs;
+  - o comportamento numa execução longa: são só 20 s, sem aquecimento nem teste de resistência;
+  - a entrada pela fila: a carga é só HTTP, então o consumer SQS não é exercitado, e a publicação da outbox vai para o MiniStack, não para o SQS real.
